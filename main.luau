@@ -898,6 +898,47 @@ local function cframe_descriptor(position_descriptor: Descriptor<number>, positi
 	return descriptor
 end
 
+local variant_descriptor_cache = {}
+local function variant_descriptor(variants: {[string]: Descriptor<any>}): Descriptor<{ kind: string, value: any }>
+	if variant_descriptor_cache then
+		return variant_descriptor_cache[variants]
+	end
+	
+	local literals: {string} = {}
+	for kind in variants do
+		table.insert(literals, kind)
+	end
+
+	local kind_descriptor = literal_descriptor(literals)
+	local kind_push, kind_pop = kind_descriptor.push, kind_descriptor.pop
+
+	local descriptor: Descriptor<{ kind: string, value: any }> = {
+		push = function(cursor, value)
+			local kind = value.kind
+			local payload = value.value
+
+			local inner = variants[kind]
+			kind_push(cursor, kind)
+			inner.push(cursor, payload)
+		end,
+
+		pop = function(cursor)
+			local kind = kind_pop(cursor)
+			local inner = variants[kind]
+			local payload = inner.pop(cursor)
+
+			return {
+				kind = kind,
+				value = payload,
+			}
+		end
+	}
+	
+	variant_descriptor_cache[variants] = descriptor
+
+	return descriptor
+end
+
 local function T<T>(value: Descriptor<T>): T
 	return value
 end
@@ -990,6 +1031,7 @@ return {
 	array = array_descriptor,
 	map = map_descriptor,
 	cframe_descriptor = cframe_descriptor,
+	variant_descriptor= variant_descriptor,
 	
 	T = T
 }
