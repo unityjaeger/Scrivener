@@ -359,6 +359,21 @@ local function popvlq(cursor: ReadCursor): number
 	return result
 end
 
+local function pushbuffer(cursor: WriteCursor, value: buffer)
+	local len = buffer.len(value)
+	pushvlq(cursor, len)
+	buffer.copy(RESERVED_BUFFER, cursor.pos, value, 0)
+	cursor.pos += len
+end
+
+local function popbuffer(cursor: ReadCursor): buffer
+	local len = popvlq(cursor)
+	local result = buffer.create(len)
+	buffer.copy(result, 0, cursor.buff, cursor.pos, len)
+	cursor.pos += len
+	return result
+end
+
 local function pushbool(cursor: WriteCursor, a: boolean, b: boolean?, c: boolean?, d: boolean?, e: boolean?, f: boolean?, g: boolean?, h: boolean?)
 	pushu8(cursor,
 		(a and 1 or 0) +
@@ -680,6 +695,11 @@ local vlq_descriptor: Descriptor<number> = {
 	pop = popvlq,
 }
 
+local buffer_descriptor: Descriptor<buffer> = {
+	push = pushbuffer,
+	pop = popbuffer
+}
+
 local string_descriptor: Descriptor<string> = {
 	push = pushstring,
 	pop = popstring,
@@ -732,6 +752,9 @@ return {
 	pushvlq = pushvlq,
 	popvlq = popvlq,
 	
+	pushbuffer = pushbuffer,
+	popbuffer = popbuffer,
+	
 	pushbool = pushbool,
 	popbool = popbool,
 	
@@ -758,6 +781,8 @@ return {
 	f64 = f64_descriptor,
 	
 	vlq = vlq_descriptor,
+	
+	buffer_descriptor = buffer_descriptor,
 	
 	bool = bool_descriptor,
 	bool_simple = bool_simple_descriptor,
