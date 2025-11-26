@@ -794,5 +794,7 @@ return {
 	opt = opt_descriptor,
 	struct = struct_descriptor,
 	array = array_descriptor,
-	map = map_descriptor
+	map = map_descriptor,
+	
+	T = T
 }
