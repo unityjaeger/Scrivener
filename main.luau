@@ -334,29 +334,52 @@ end
 
 local function pushvlq(cursor: WriteCursor, value: number)
 	repeat
-		local byte = bit32.band(value, 0x7F) 
-		value = bit32.rshift(value, 7)
+		local byte = value % 128
+		value = (value - byte) / 128
+
 		if value > 0 then
-			byte = bit32.bor(byte, 0x80)
+			byte += 128
 		end
-		buffer.writeu8(RESERVED_BUFFER, cursor.pos, byte)
-		cursor.pos += 1
+
+		pushu8(cursor, byte)
 	until value == 0
 end
 
 local function popvlq(cursor: ReadCursor): number
 	local result = 0
-	local shift = 0
-	local byte
+	local shift = 1
 
-	repeat
-		byte = buffer.readu8(cursor.buff, cursor.pos)
-		cursor.pos += 1
-		result = bit32.bor(result, bit32.lshift(bit32.band(byte, 0x7F), shift))
-		shift += 7
-	until bit32.band(byte, 0x80) == 0
+	while true do
+		local byte = popu8(cursor)
+		local chunk = byte % 128
+
+		result += chunk * shift
+		shift *= 128
+
+		if byte < 128 then
+			break
+		end
+	end
 
 	return result
+end
+
+local function pushsvlq(cursor: WriteCursor, value: number)
+	if value >= 0 then
+		pushvlq(cursor, value * 2)
+	else
+		pushvlq(cursor, -value * 2 - 1)
+	end
+end
+
+local function popsvlq(cursor: ReadCursor): number
+	local value = popvlq(cursor)
+	
+	if value % 2 == 0 then
+		return value / 2
+	else
+		return -(value + 1) / 2
+	end
 end
 
 local function pushbuffer(cursor: WriteCursor, value: buffer)
@@ -695,6 +718,11 @@ local vlq_descriptor: Descriptor<number> = {
 	pop = popvlq,
 }
 
+local svlq_descriptor: Descriptor<number> = {
+	push = pushsvlq,
+	pop = popsvlq
+}
+
 local buffer_descriptor: Descriptor<buffer> = {
 	push = pushbuffer,
 	pop = popbuffer
@@ -781,6 +809,7 @@ return {
 	f64 = f64_descriptor,
 	
 	vlq = vlq_descriptor,
+	svlq = svlq_descriptor,
 	
 	buffer_descriptor = buffer_descriptor,
 	
