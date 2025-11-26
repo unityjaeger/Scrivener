@@ -15,12 +15,21 @@ export type ReadCursor = {
 
 export type Descriptor<T> = {
 	push: (cursor: WriteCursor, value: T) -> (),
-	pop: (cursor: ReadCursor) -> T
+	pop: (cursor: ReadCursor) -> T,
+	optional: boolean?
 }
 
 export type TupleDescriptor<T...> = {
 	push: (cursor: WriteCursor, T...) -> (),
 	pop: (cursor: ReadCursor) -> T...
+}
+
+type StructField = Descriptor<any> & {
+	name: string
+}
+
+type OptStructField = StructField & {
+	bitmask: number
 }
 
 local function writei24(buff: buffer, offset: number, value: number): ()
@@ -349,17 +358,13 @@ local function popvlq(cursor: ReadCursor): number
 	local result = 0
 	local shift = 1
 
-	while true do
+	repeat
 		local byte = popu8(cursor)
 		local chunk = byte % 128
 
 		result += chunk * shift
 		shift *= 128
-
-		if byte < 128 then
-			break
-		end
-	end
+	until byte < 128
 
 	return result
 end
@@ -463,191 +468,6 @@ local function popopt<T>(cursor: ReadCursor, pop_method: (cursor: ReadCursor) ->
 	end
 end
 
-local literal_descriptor_cache = {}
-local function literal_descriptor<T>(literals: {T}): Descriptor<T>
-	if literal_descriptor_cache[literals] then
-		return literal_descriptor_cache[literals]
-	end
-	
-	local inverse_literals = inverse_table(literals)
-	
-	local descriptor: Descriptor<T> = {
-		push = function(cursor, value: T)
-			local index = inverse_literals[value]
-			pushu8(cursor, index - 1)
-		end,
-		pop = function(cursor)
-			local index = popu8(cursor)
-			return literals[index + 1]
-		end,
-	}
-	
-	literal_descriptor_cache[literals] = descriptor
-	
-	return descriptor
-end
-
-local vector_descriptor_cache = {}
-local function vector_descriptor<number>(inner: Descriptor<number>): Descriptor<vector>
-	if vector_descriptor_cache[inner] then
-		return vector_descriptor_cache[inner]
-	end
-	
-	local push, pop = inner.push, inner.pop
-	
-	local descriptor: Descriptor<vector> = {
-		push = function(cursor, value: vector)
-			push(cursor, value.x)
-			push(cursor, value.y)
-			push(cursor, value.z)
-		end,
-		pop = function(cursor)
-			return vector.create(
-				pop(cursor),
-				pop(cursor),
-				pop(cursor)
-			)
-		end,
-	}
-	
-	vector_descriptor_cache[inner] = descriptor
-	
-	return descriptor
-end
-
-local opt_descriptor_cache = {}
-local function opt_descriptor<T>(inner: Descriptor<T>): Descriptor<T?>
-	if opt_descriptor_cache[inner] then
-		return opt_descriptor_cache[inner]
-	end
-	
-	local push, pop = inner.push, inner.pop
-	
-	--inline for slightly better speed yknow
-	local descriptor: Descriptor<T?> = {
-		push = function(cursor, value: T?)
-			if value == nil then
-				pushu8(cursor, 0)
-			else
-				pushu8(cursor, 1)
-				push(cursor, value)
-			end
-		end,
-		pop = function(cursor)
-			local present = popu8(cursor)
-			if present == 1 then
-				return pop(cursor)
-			else
-				return nil
-			end
-		end,
-	}
-	
-	opt_descriptor_cache[inner] = descriptor
-	
-	return descriptor
-end
-
-local struct_descriptor_cache = {}
-local function struct_descriptor<T>(struct: T): Descriptor<T>
-	if struct_descriptor_cache[struct] then
-		return struct_descriptor_cache[struct]
-	end
-	
-	local descriptor: Descriptor<T> = {
-		push = function(cursor, value)
-			for field, inner in struct :: {[string]: Descriptor<any>} do
-				inner.push(cursor, value[field])
-			end
-		end,
-		pop = function(cursor)
-			local result = {}
-			for field, inner in struct :: {[string]: Descriptor<any>} do
-				result[field] = inner.pop(cursor)
-			end
-			return result
-		end,
-	}
-	
-	struct_descriptor_cache[struct] = descriptor
-	
-	return descriptor
-end
-
-local array_descriptor_cache = {}
-local function array_descriptor<T>(inner: Descriptor<T>): Descriptor<{T}>
-	if array_descriptor_cache[inner] then
-		return array_descriptor_cache[inner]
-	end
-	
-	local push, pop = inner.push, inner.pop
-	
-	local descriptor: Descriptor<{T}> = {
-		push = function(cursor, value: {T})
-			pushvlq(cursor, #value)
-			for _, entry in value do
-				push(cursor, entry)
-			end
-		end,
-		pop = function(cursor)
-			local len = popvlq(cursor)
-			local result = table.create(len)
-			for i = 1, len do
-				table.insert(result, pop(cursor))
-			end
-			return result
-		end,
-	}
-	
-	array_descriptor_cache[inner] = descriptor
-	
-	return descriptor
-end
-
-local map_descriptor_cache = {}
-local function map_descriptor<K, V>(inner_key: Descriptor<K>, inner_value: Descriptor<V>): Descriptor<{[K]: V}>
-	if map_descriptor_cache[inner_key] and map_descriptor_cache[inner_key][inner_value] then
-		return map_descriptor_cache[inner_key][inner_value]
-	end
-	
-	local key_push, key_pop = inner_key.push, inner_key.pop
-	local value_push, value_pop = inner_value.push, inner_value.pop
-	
-	local descriptor: Descriptor<{[K]: V}> = {
-		push = function(cursor, value: {[K]: V})
-			local len = 0
-			for key, entry in value do
-				len += 1
-			end
-			
-			pushvlq(cursor, len)
-			
-			for key, entry in value do
-				key_push(cursor, key)
-				value_push(cursor, entry)
-			end
-		end,
-		pop = function(cursor)
-			local len = popvlq(cursor)
-			local map = {}
-			
-			for i = 1, len do
-				map[key_pop(cursor)] = value_pop(cursor)
-			end
-			
-			return map
-		end,
-	}
-	
-	map_descriptor_cache[inner_key] = {[inner_value] = descriptor}
-	
-	return descriptor
-end
-
-local function T<T>(value: Descriptor<T>): T
-	return value
-end
-
 local u8_descriptor: Descriptor<number> = {
 	push = pushu8,
 	pop = popu8,
@@ -742,6 +562,289 @@ local bool_simple_descriptor: Descriptor<boolean> = {
 	push = pushbool_simple,
 	pop = popboool_simple
 }
+
+local literal_descriptor_cache = {}
+local function literal_descriptor<T>(literals: {T}): Descriptor<T>
+	if literal_descriptor_cache[literals] then
+		return literal_descriptor_cache[literals]
+	end
+	
+	local inverse_literals = inverse_table(literals)
+	
+	local descriptor: Descriptor<T> = {
+		push = function(cursor, value: T)
+			local index = inverse_literals[value]
+			pushu8(cursor, index - 1)
+		end,
+		pop = function(cursor)
+			local index = popu8(cursor)
+			return literals[index + 1]
+		end,
+	}
+	
+	literal_descriptor_cache[literals] = descriptor
+	
+	return descriptor
+end
+
+local vector_descriptor_cache = {}
+local function vector_descriptor<number>(inner: Descriptor<number>): Descriptor<vector>
+	if vector_descriptor_cache[inner] then
+		return vector_descriptor_cache[inner]
+	end
+	
+	local push, pop = inner.push, inner.pop
+	
+	local descriptor: Descriptor<vector> = {
+		push = function(cursor, value: vector)
+			push(cursor, value.x)
+			push(cursor, value.y)
+			push(cursor, value.z)
+		end,
+		pop = function(cursor)
+			return vector.create(
+				pop(cursor),
+				pop(cursor),
+				pop(cursor)
+			)
+		end,
+	}
+	
+	vector_descriptor_cache[inner] = descriptor
+	
+	return descriptor
+end
+
+local opt_descriptor_cache = {}
+local function opt_descriptor<T>(inner: Descriptor<T>): Descriptor<T?>
+	if opt_descriptor_cache[inner] then
+		return opt_descriptor_cache[inner]
+	end
+	
+	local push, pop = inner.push, inner.pop
+	
+	--inline for slightly better speed yknow
+	local descriptor: Descriptor<T?> = {
+		push = function(cursor, value: T?)
+			if value == nil then
+				pushu8(cursor, 0)
+			else
+				pushu8(cursor, 1)
+				push(cursor, value)
+			end
+		end,
+		pop = function(cursor)
+			local present = popu8(cursor)
+			if present == 1 then
+				return pop(cursor)
+			else
+				return nil
+			end
+		end,
+	}
+	
+	opt_descriptor_cache[inner] = descriptor
+	
+	return descriptor
+end
+
+local function mark_opt<T>(inner: Descriptor<T>): Descriptor<T?>
+	local copy = table.clone(inner)
+	copy.optional = true
+	return copy
+end
+
+local function simple_struct<T>(fields: {StructField}): Descriptor<T>
+	return {
+		push = function(cursor, value)
+			for _, inner in fields do
+				inner.push(cursor, value[inner.name])
+			end
+		end,
+		pop = function(cursor)
+			local result = {}
+			for _, inner in fields do
+				result[inner.name] = inner.pop(cursor)
+			end
+			return result
+		end,
+	}
+end
+
+local function optional_struct<T>(fields: {StructField}, opt_fields: {OptStructField}, byte_descriptor: Descriptor<number>): Descriptor<T>
+	local push_byte, pop_byte = byte_descriptor.push, byte_descriptor.pop
+	
+	return {
+		push = function(cursor, value)
+			local byte = 0
+			for _, inner in opt_fields do
+				local field_value = value[inner.name]
+				if field_value ~= nil then
+					byte = bit32.bor(byte, inner.bitmask)
+				end
+			end
+			
+			push_byte(cursor, byte)
+			
+			for _, inner in opt_fields do
+				local field_value = value[inner.name]
+				if field_value ~= nil then
+					inner.push(cursor, field_value)
+				end
+			end
+			
+			for _, inner in fields do
+				inner.push(cursor, value[inner.name])
+			end
+		end,
+		pop = function(cursor)
+			local result = {}
+			local byte = pop_byte(cursor)
+			
+			for _, inner in opt_fields do
+				if bit32.band(byte, inner.bitmask) ~= 0 then
+					result[inner.name] = inner.pop(cursor)
+				end
+			end
+			
+			for _, inner in fields do
+				result[inner.name] = inner.pop(cursor)
+			end
+			
+			return result
+		end,
+	}
+end
+
+local struct_descriptor_cache = {}
+local function struct_descriptor<T>(struct: T): Descriptor<T>
+	if struct_descriptor_cache[struct] then
+		return struct_descriptor_cache[struct]
+	end
+	
+	local fields: {StructField} = {}
+	local opt_fields: {OptStructField} = {}
+	local opt_count = 0	
+
+	for name, inner in struct :: {[string]: Descriptor<any>} do
+		if inner.optional then
+			table.insert(opt_fields, {
+				name = name,
+				push = inner.push,
+				pop = inner.pop,
+				bitmask = bit32.lshift(1, opt_count)
+			} :: OptStructField)
+			
+			opt_count += 1
+			assert(opt_count <= 32, "structs can not house more than 32 optional fields")
+		else
+			table.insert(fields, {
+				name = name,
+				push = inner.push,
+				pop = inner.pop
+			} :: StructField)
+		end
+	end
+	
+	table.sort(opt_fields, function(a: OptStructField, b: OptStructField) return a.name < b.name end)
+	table.sort(fields, function(a: StructField, b: StructField) return a.name < b.name end)
+	
+	local byte_descriptor: Descriptor<number>
+	if opt_count <= 8 then
+		byte_descriptor = u8_descriptor
+	elseif opt_count <= 16 then
+		byte_descriptor = u16_descriptor
+	elseif opt_count <= 24 then
+		byte_descriptor = u24_descriptor
+	else
+		byte_descriptor = u32_descriptor
+	end
+	
+	local descriptor: Descriptor<T>
+	if opt_count == 0 then
+		descriptor = simple_struct(fields)
+	else
+		descriptor = optional_struct(fields, opt_fields, byte_descriptor)
+	end
+	
+	struct_descriptor_cache[struct] = descriptor
+	
+	return descriptor
+end
+
+local array_descriptor_cache = {}
+local function array_descriptor<T>(inner: Descriptor<T>): Descriptor<{T}>
+	if array_descriptor_cache[inner] then
+		return array_descriptor_cache[inner]
+	end
+	
+	local push, pop = inner.push, inner.pop
+	
+	local descriptor: Descriptor<{T}> = {
+		push = function(cursor, value: {T})
+			pushvlq(cursor, #value)
+			for _, entry in value do
+				push(cursor, entry)
+			end
+		end,
+		pop = function(cursor)
+			local len = popvlq(cursor)
+			local result = table.create(len)
+			for i = 1, len do
+				table.insert(result, pop(cursor))
+			end
+			return result
+		end,
+	}
+	
+	array_descriptor_cache[inner] = descriptor
+	
+	return descriptor
+end
+
+local map_descriptor_cache = {}
+local function map_descriptor<K, V>(inner_key: Descriptor<K>, inner_value: Descriptor<V>): Descriptor<{[K]: V}>
+	if map_descriptor_cache[inner_key] and map_descriptor_cache[inner_key][inner_value] then
+		return map_descriptor_cache[inner_key][inner_value]
+	end
+	
+	local key_push, key_pop = inner_key.push, inner_key.pop
+	local value_push, value_pop = inner_value.push, inner_value.pop
+	
+	local descriptor: Descriptor<{[K]: V}> = {
+		push = function(cursor, value: {[K]: V})
+			local len = 0
+			for key, entry in value do
+				len += 1
+			end
+			
+			pushvlq(cursor, len)
+			
+			for key, entry in value do
+				key_push(cursor, key)
+				value_push(cursor, entry)
+			end
+		end,
+		pop = function(cursor)
+			local len = popvlq(cursor)
+			local map = {}
+			
+			for i = 1, len do
+				map[key_pop(cursor)] = value_pop(cursor)
+			end
+			
+			return map
+		end,
+	}
+	
+	map_descriptor_cache[inner_key] = {[inner_value] = descriptor}
+	
+	return descriptor
+end
+
+local function T<T>(value: Descriptor<T>): T
+	return value
+end
 
 return {
 	write_cursor = write_cursor,
