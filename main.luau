@@ -7,6 +7,7 @@ local PI = math.pi
 
 export type WriteCursor = {
 	pos: number,
+	global_offset: number
 }
 
 export type ReadCursor = {
@@ -34,94 +35,94 @@ type OptStructField = StructField & {
 }
 
 type function EitherOr(a: type, b: type)
-    if a:is("unknown") then
-        return b
-    else
-        return a
-    end
+	if a:is("unknown") then
+		return b
+	else
+		return a
+	end
 end
 
 export type function SetTransformer(t: type)
-    local new = types.newtable()
-    for _, v in t:components() do
-        new:setproperty(v, types.optional(types.boolean))
-    end
-    return new :: any
+	local new = types.newtable()
+	for _, v in t:components() do
+		new:setproperty(v, types.optional(types.boolean))
+	end
+	return new :: any
 end
 
 type function GetDescriptorType(t: type)
-    if t.tag ~= "table" then
-        return types.never
-    end
+	if t.tag ~= "table" then
+		return types.never
+	end
 
-    local des_fn = t:readproperty(types.singleton("pop"))
-    if not des_fn or not des_fn:is("function") then
-        return types.never
-    end
+	local des_fn = t:readproperty(types.singleton("pop"))
+	if not des_fn or not des_fn:is("function") then
+		return types.never
+	end
 
-    local ret = des_fn:returns().head
-    if not ret or not ret[1] then
-        return types.never
-    end
+	local ret = des_fn:returns().head
+	if not ret or not ret[1] then
+		return types.never
+	end
 
-    return ret[1]
+	return ret[1]
 end
 
 type function StructTransformer(t: type)
-    if t.tag ~= "table" then
-        return t
-    end
+	if t.tag ~= "table" then
+		return t
+	end
 
-    local mt = t:metatable()
-    if mt then
-        local index_singleton = types.singleton("__index")
-        for key, v in mt:properties() do
-            if key == index_singleton then
-                t = v.read or v.write :: any
-            end
-        end
-    end
+	local mt = t:metatable()
+	if mt then
+		local index_singleton = types.singleton("__index")
+		for key, v in mt:properties() do
+			if key == index_singleton then
+				t = v.read or v.write :: any
+			end
+		end
+	end
 
-    local tbl_props = t:properties()
+	local tbl_props = t:properties()
 
-    local phantom_data = GetDescriptorType(t)
-    if phantom_data ~= types.never then
-        return StructTransformer(phantom_data)
-    end
+	local phantom_data = GetDescriptorType(t)
+	if phantom_data ~= types.never then
+		return StructTransformer(phantom_data)
+	end
 
-    local indexer = t:indexer()
-    if indexer then
-        local new = types.newtable()
-        new:setindexer(StructTransformer(indexer.index), StructTransformer(indexer.readresult))
-        return new :: any
-    end
+	local indexer = t:indexer()
+	if indexer then
+		local new = types.newtable()
+		new:setindexer(StructTransformer(indexer.index), StructTransformer(indexer.readresult))
+		return new :: any
+	end
 
-    local new = types.newtable()
-    for key, v in tbl_props do
-        local value = v.read or v.write
-        new:setproperty(key, StructTransformer(value))
-    end
-    return new :: any
+	local new = types.newtable()
+	for key, v in tbl_props do
+		local value = v.read or v.write
+		new:setproperty(key, StructTransformer(value))
+	end
+	return new :: any
 end
 
 type function VariantTransformer(t: type)
-    local t_props = t:properties()
+	local t_props = t:properties()
 
-    local intersect
+	local intersect
 
-    for k, v in t_props do
-        local new_t = types.newtable()
-        new_t:setproperty(types.singleton("kind"), k)
-        new_t:setproperty(types.singleton("value"), v.read)
+	for k, v in t_props do
+		local new_t = types.newtable()
+		new_t:setproperty(types.singleton("kind"), k)
+		new_t:setproperty(types.singleton("value"), StructTransformer(v.read))
 
-        if not intersect then
-            intersect = new_t
-        else
-            intersect = types.unionof(intersect, new_t)
-        end
-    end
+		if not intersect then
+			intersect = new_t
+		else
+			intersect = types.unionof(intersect, new_t)
+		end
+	end
 
-    return intersect :: any
+	return intersect :: any
 end
 
 local function writei24(buff: buffer, offset: number, value: number): ()
@@ -273,19 +274,22 @@ end
 
 local function write_cursor(global_offset: number?): WriteCursor
 	return {
-		pos = global_offset or 0
+		pos = global_offset or 0,
+		global_offset = global_offset or 0
 	}
 end
 
 local function finalize(cursor: WriteCursor): buffer
-	local buff = buffer.create(cursor.pos)
-	buffer.copy(buff, 0, RESERVED_BUFFER, 0, cursor.pos)
+	local global_offset, pos = cursor.global_offset, cursor.pos
+	local buff = buffer.create(pos)
+	local count = pos - global_offset
+	buffer.copy(buff, 0, RESERVED_BUFFER, global_offset, count)
 	return buff
 end
 
-local function read_cursor(buff: buffer, global_offset: number?): ReadCursor
+local function read_cursor(buff: buffer): ReadCursor
 	return {
-		pos = global_offset or 0,
+		pos = 0,
 		buff = buff
 	}
 end
@@ -471,7 +475,7 @@ end
 
 local function popsvlq(cursor: ReadCursor): number
 	local value = popvlq(cursor)
-	
+
 	if value % 2 == 0 then
 		return value / 2
 	else
@@ -497,13 +501,13 @@ end
 local function pushbool(cursor: WriteCursor, a: boolean, b: boolean?, c: boolean?, d: boolean?, e: boolean?, f: boolean?, g: boolean?, h: boolean?)
 	pushu8(cursor,
 		(a and 1 or 0) +
-		(b and 2 or 0) +
-		(c and 4 or 0) +
-		(d and 8 or 0) +
-		(e and 16 or 0) +
-		(f and 32 or 0) +
-		(g and 64 or 0) +
-		(h and 128 or 0)
+			(b and 2 or 0) +
+			(c and 4 or 0) +
+			(d and 8 or 0) +
+			(e and 16 or 0) +
+			(f and 32 or 0) +
+			(g and 64 or 0) +
+			(h and 128 or 0)
 	)
 end
 
@@ -685,11 +689,11 @@ local function literal_descriptor<T>(literals: {T}): Descriptor<T>
 	if literal_descriptor_cache[literals] then
 		return literal_descriptor_cache[literals]
 	end
-	
+
 	assert(#literals < 256, "cannot have more than 255 literals")
-	
+
 	local inverse_literals = inverse_table(literals)
-	
+
 	local descriptor: Descriptor<T> = {
 		push = function(cursor, value: T)
 			local index = inverse_literals[value]
@@ -700,9 +704,9 @@ local function literal_descriptor<T>(literals: {T}): Descriptor<T>
 			return literals[index + 1]
 		end,
 	}
-	
+
 	literal_descriptor_cache[literals] = descriptor
-	
+
 	return descriptor
 end
 
@@ -711,9 +715,9 @@ local function vector_descriptor<number>(number_descriptor: Descriptor<number>):
 	if vector_descriptor_cache[number_descriptor] then
 		return vector_descriptor_cache[number_descriptor]
 	end
-	
+
 	local push, pop = number_descriptor.push, number_descriptor.pop
-	
+
 	local descriptor: Descriptor<vector> = {
 		push = function(cursor, value: vector)
 			push(cursor, value.x)
@@ -728,9 +732,9 @@ local function vector_descriptor<number>(number_descriptor: Descriptor<number>):
 			)
 		end,
 	}
-	
+
 	vector_descriptor_cache[number_descriptor] = descriptor
-	
+
 	return descriptor
 end
 
@@ -739,9 +743,9 @@ local function opt_descriptor<T>(inner: Descriptor<T>): Descriptor<T?>
 	if opt_descriptor_cache[inner] then
 		return opt_descriptor_cache[inner]
 	end
-	
+
 	local push, pop = inner.push, inner.pop
-	
+
 	--inline for slightly better speed yknow
 	local descriptor: Descriptor<T?> = {
 		push = function(cursor, value: T?)
@@ -761,9 +765,9 @@ local function opt_descriptor<T>(inner: Descriptor<T>): Descriptor<T?>
 			end
 		end,
 	}
-	
+
 	opt_descriptor_cache[inner] = descriptor
-	
+
 	return descriptor
 end
 
@@ -786,7 +790,7 @@ end
 
 local function optional_struct<T>(fields: {StructField}, opt_fields: {OptStructField}, byte_descriptor: Descriptor<number>): Descriptor<T>
 	local push_byte, pop_byte = byte_descriptor.push, byte_descriptor.pop
-	
+
 	return {
 		push = function(cursor, value)
 			local byte = 0
@@ -796,16 +800,16 @@ local function optional_struct<T>(fields: {StructField}, opt_fields: {OptStructF
 					byte = bit32.bor(byte, inner.bitmask)
 				end
 			end
-			
+
 			push_byte(cursor, byte)
-			
+
 			for _, inner in opt_fields do
 				local field_value = value[inner.name]
 				if field_value ~= nil then
 					inner.push(cursor, field_value)
 				end
 			end
-			
+
 			for _, inner in fields do
 				inner.push(cursor, value[inner.name])
 			end
@@ -813,17 +817,17 @@ local function optional_struct<T>(fields: {StructField}, opt_fields: {OptStructF
 		pop = function(cursor)
 			local result = {}
 			local byte = pop_byte(cursor)
-			
+
 			for _, inner in opt_fields do
 				if bit32.band(byte, inner.bitmask) ~= 0 then
 					result[inner.name] = inner.pop(cursor)
 				end
 			end
-			
+
 			for _, inner in fields do
 				result[inner.name] = inner.pop(cursor)
 			end
-			
+
 			return result
 		end,
 	}
@@ -834,7 +838,7 @@ local function struct_descriptor_hidden<T>(struct: T): Descriptor<T>
 	if struct_descriptor_cache[struct] then
 		return struct_descriptor_cache[struct]
 	end
-	
+
 	local fields: {StructField} = {}
 	local opt_fields: {OptStructField} = {}
 	local opt_count = 0	
@@ -847,7 +851,7 @@ local function struct_descriptor_hidden<T>(struct: T): Descriptor<T>
 				pop = inner.pop,
 				bitmask = bit32.lshift(1, opt_count)
 			} :: OptStructField)
-			
+
 			opt_count += 1
 			assert(opt_count <= 32, "structs can not house more than 32 optional fields")
 		else
@@ -858,10 +862,10 @@ local function struct_descriptor_hidden<T>(struct: T): Descriptor<T>
 			} :: StructField)
 		end
 	end
-	
+
 	table.sort(opt_fields, function(a: OptStructField, b: OptStructField) return a.name < b.name end)
 	table.sort(fields, function(a: StructField, b: StructField) return a.name < b.name end)
-	
+
 	local byte_descriptor: Descriptor<number>
 	if opt_count <= 8 then
 		byte_descriptor = u8_descriptor
@@ -872,21 +876,21 @@ local function struct_descriptor_hidden<T>(struct: T): Descriptor<T>
 	else
 		byte_descriptor = u32_descriptor
 	end
-	
+
 	local descriptor: Descriptor<T>
 	if opt_count == 0 then
 		descriptor = simple_struct(fields)
 	else
 		descriptor = optional_struct(fields, opt_fields, byte_descriptor)
 	end
-	
+
 	struct_descriptor_cache[struct] = descriptor
-	
+
 	return descriptor
 end
 
 local function struct_descriptor<T>(struct: T): Descriptor<StructTransformer<T>>
-    return struct_descriptor_hidden(struct)
+	return struct_descriptor_hidden(struct)
 end
 
 local array_descriptor_cache = {}
@@ -894,9 +898,9 @@ local function array_descriptor<T>(element_descriptor: Descriptor<T>): Descripto
 	if array_descriptor_cache[element_descriptor] then
 		return array_descriptor_cache[element_descriptor]
 	end
-	
+
 	local push, pop = element_descriptor.push, element_descriptor.pop
-	
+
 	local descriptor: Descriptor<{T}> = {
 		push = function(cursor, value: {T})
 			pushvlq(cursor, #value)
@@ -913,9 +917,9 @@ local function array_descriptor<T>(element_descriptor: Descriptor<T>): Descripto
 			return result
 		end,
 	}
-	
+
 	array_descriptor_cache[element_descriptor] = descriptor
-	
+
 	return descriptor
 end
 
@@ -924,19 +928,19 @@ local function map_descriptor<K, V>(key_descriptor: Descriptor<K>, value_descrip
 	if map_descriptor_cache[key_descriptor] and map_descriptor_cache[key_descriptor][value_descriptor] then
 		return map_descriptor_cache[key_descriptor][value_descriptor]
 	end
-	
+
 	local key_push, key_pop = key_descriptor.push, key_descriptor.pop
 	local value_push, value_pop = value_descriptor.push, value_descriptor.pop
-	
+
 	local descriptor: Descriptor<{[K]: V}> = {
 		push = function(cursor, value: {[K]: V})
 			local len = 0
 			for key, entry in value do
 				len += 1
 			end
-			
+
 			pushvlq(cursor, len)
-			
+
 			for key, entry in value do
 				key_push(cursor, key)
 				value_push(cursor, entry)
@@ -945,55 +949,55 @@ local function map_descriptor<K, V>(key_descriptor: Descriptor<K>, value_descrip
 		pop = function(cursor)
 			local len = popvlq(cursor)
 			local map = {}
-			
+
 			for i = 1, len do
 				map[key_pop(cursor)] = value_pop(cursor)
 			end
-			
+
 			return map
 		end,
 	}
-	
+
 	map_descriptor_cache[key_descriptor] = {[value_descriptor] = descriptor}
-	
+
 	return descriptor
 end
 
 local id_to_rotation = {
-    CFrame.Angles(0, 0, 0),
-    CFrame.Angles(math.rad(90), 0, 0),
-    CFrame.Angles(0, math.rad(180), math.rad(180)),
-    CFrame.Angles(math.rad(-90), 0, 0),
-    CFrame.Angles(0, math.rad(180), math.rad(90)),
-    CFrame.Angles(0, math.rad(90), math.rad(90)),
-    CFrame.Angles(0, 0, math.rad(90)),
-    CFrame.Angles(0, math.rad(-90), math.rad(90)),
-    CFrame.Angles(math.rad(-90), math.rad(-90), 0),
-    CFrame.Angles(0, math.rad(-90), 0),
-    CFrame.Angles(math.rad(90), math.rad(-90), 0),
-    CFrame.Angles(0, math.rad(90), math.rad(180)),
-    CFrame.Angles(0, math.rad(-90), math.rad(180)),
-    CFrame.Angles(0, math.rad(180), 0),
-    CFrame.Angles(math.rad(-90), math.rad(-180), 0),
-    CFrame.Angles(0, 0, math.rad(180)),
-    CFrame.Angles(math.rad(90), math.rad(180), 0),
-    CFrame.Angles(0, 0, math.rad(-90)),
-    CFrame.Angles(0, math.rad(-90), math.rad(-90)),
-    CFrame.Angles(0, math.rad(-180), math.rad(-90)),
-    CFrame.Angles(0, math.rad(90), math.rad(-90)),
-    CFrame.Angles(math.rad(90), math.rad(90), 0),
-    CFrame.Angles(0, math.rad(90), 0),
-    CFrame.Angles(math.rad(-90), math.rad(90), 0),
+	CFrame.Angles(0, 0, 0),
+	CFrame.Angles(math.rad(90), 0, 0),
+	CFrame.Angles(0, math.rad(180), math.rad(180)),
+	CFrame.Angles(math.rad(-90), 0, 0),
+	CFrame.Angles(0, math.rad(180), math.rad(90)),
+	CFrame.Angles(0, math.rad(90), math.rad(90)),
+	CFrame.Angles(0, 0, math.rad(90)),
+	CFrame.Angles(0, math.rad(-90), math.rad(90)),
+	CFrame.Angles(math.rad(-90), math.rad(-90), 0),
+	CFrame.Angles(0, math.rad(-90), 0),
+	CFrame.Angles(math.rad(90), math.rad(-90), 0),
+	CFrame.Angles(0, math.rad(90), math.rad(180)),
+	CFrame.Angles(0, math.rad(-90), math.rad(180)),
+	CFrame.Angles(0, math.rad(180), 0),
+	CFrame.Angles(math.rad(-90), math.rad(-180), 0),
+	CFrame.Angles(0, 0, math.rad(180)),
+	CFrame.Angles(math.rad(90), math.rad(180), 0),
+	CFrame.Angles(0, 0, math.rad(-90)),
+	CFrame.Angles(0, math.rad(-90), math.rad(-90)),
+	CFrame.Angles(0, math.rad(-180), math.rad(-90)),
+	CFrame.Angles(0, math.rad(90), math.rad(-90)),
+	CFrame.Angles(math.rad(90), math.rad(90), 0),
+	CFrame.Angles(0, math.rad(90), 0),
+	CFrame.Angles(math.rad(-90), math.rad(90), 0),
 }
 
 local rotation_to_id: {[number]: {[number]: {[number]: number}}} = {}
 
 for id, cframe in id_to_rotation do
-    local x, y, z = cframe:ToOrientation()
+	local x, y, z = cframe:ToOrientation()
 
-    rotation_to_id[x] = rotation_to_id[x] or {}
-    rotation_to_id[x][y] = rotation_to_id[x][y] or {}
-    rotation_to_id[x][y][z] = id
+	rotation_to_id[x] = rotation_to_id[x] or {}
+	rotation_to_id[x][y] = rotation_to_id[x][y] or {}
+	rotation_to_id[x][y][z] = id
 end
 
 local cframe_descriptor_cache = {}
@@ -1002,55 +1006,55 @@ local function cframe_descriptor(position_descriptor: Descriptor<number>, positi
 		warn("cached cframe descriptors may not have the same position_scale if a different one was defined")
 		return cframe_descriptor_cache[position_descriptor]
 	end
-	
+
 	local position_push, position_pop = position_descriptor.push, position_descriptor.pop
-	
+
 	local scale = position_scale or 1
-	
+
 	local descriptor: Descriptor<CFrame> = {
 		push = function(cursor, value: CFrame)
 			local rot_x, rot_y, rot_z = value:ToOrientation()
-            local id = rotation_to_id[rot_x] and rotation_to_id[rot_x][rot_y] and rotation_to_id[rot_x][rot_y][rot_z]
-            if id then
-                pushu8(cursor, id)
-            else
-                pushu8(cursor, 0)
-                pushu16(cursor, math.map(rot_x, -PI, PI, 0, 2^16 - 1))
-                pushu16(cursor, math.map(rot_y, -PI, PI, 0, 2^16 - 1))
-                pushu16(cursor, math.map(rot_z, -PI, PI, 0, 2^16 - 1))
-            end
+			local id = rotation_to_id[rot_x] and rotation_to_id[rot_x][rot_y] and rotation_to_id[rot_x][rot_y][rot_z]
+			if id then
+				pushu8(cursor, id)
+			else
+				pushu8(cursor, 0)
+				pushu16(cursor, math.map(rot_x, -PI, PI, 0, 2^16 - 1))
+				pushu16(cursor, math.map(rot_y, -PI, PI, 0, 2^16 - 1))
+				pushu16(cursor, math.map(rot_z, -PI, PI, 0, 2^16 - 1))
+			end
 
 			position_push(cursor, value.X * scale)
 			position_push(cursor, value.Y * scale)
 			position_push(cursor, value.Z * scale)
 		end,
 		pop = function(cursor)
-            local id = popu8(cursor)
-            local angles = id_to_rotation[id]
-            if angles then
-                return CFrame.new(
-                    position_pop(cursor) / scale,
-                    position_pop(cursor) / scale,
-                    position_pop(cursor) / scale
-                ) * angles
-            else
-                local q_x = math.map(popu16(cursor), 0, 2^16 - 1, -PI, PI)
-                local q_y = math.map(popu16(cursor), 0, 2^16 - 1, -PI, PI)
-                local q_z = math.map(popu16(cursor), 0, 2^16 - 1, -PI, PI)
-                local w = math.sqrt(1 - math.clamp(q_x * q_x + q_y * q_y + q_z * q_z, 0, 1))
+			local id = popu8(cursor)
+			local angles = id_to_rotation[id]
+			if angles then
+				return CFrame.new(
+					position_pop(cursor) / scale,
+					position_pop(cursor) / scale,
+					position_pop(cursor) / scale
+				) * angles
+			else
+				local q_x = math.map(popu16(cursor), 0, 2^16 - 1, -PI, PI)
+				local q_y = math.map(popu16(cursor), 0, 2^16 - 1, -PI, PI)
+				local q_z = math.map(popu16(cursor), 0, 2^16 - 1, -PI, PI)
+				local w = math.sqrt(1 - math.clamp(q_x * q_x + q_y * q_y + q_z * q_z, 0, 1))
 
-                return CFrame.new(
-                    position_pop(cursor) / scale,
-                    position_pop(cursor) / scale,
-                    position_pop(cursor) / scale,
-                    q_x, q_y, q_z, w
-                )
-            end
+				return CFrame.new(
+					position_pop(cursor) / scale,
+					position_pop(cursor) / scale,
+					position_pop(cursor) / scale,
+					q_x, q_y, q_z, w
+				)
+			end
 		end,
 	}
-	
+
 	cframe_descriptor_cache[position_descriptor] = descriptor
-	
+
 	return descriptor
 end
 
@@ -1059,7 +1063,7 @@ local function variant_descriptor_hidden<T>(variants: T): Descriptor<T>
 	if variant_descriptor_cache then
 		return variant_descriptor_cache[variants]
 	end
-	
+
 	local literals: {string} = {}
 	for kind in variants :: {[string]: Descriptor<any>} do
 		table.insert(literals, kind)
@@ -1089,14 +1093,14 @@ local function variant_descriptor_hidden<T>(variants: T): Descriptor<T>
 			}
 		end
 	}
-	
+
 	variant_descriptor_cache[variants] = descriptor
 
 	return descriptor
 end
 
 local function variant_descriptor<T>(variants: T): Descriptor<VariantTransformer<T>>
-    return variant_descriptor_hidden(variants)
+	return variant_descriptor_hidden(variants)
 end
 
 local bitarray_descriptor_cache = {}
@@ -1104,73 +1108,73 @@ local function bitarray_descriptor(byte_count: number): Descriptor<{boolean}>
 	if bitarray_descriptor_cache[byte_count] then
 		return bitarray_descriptor_cache[byte_count]
 	end
-	
+
 	local descriptor: Descriptor<{boolean}> = {
 		push = function(cursor, value: {boolean})
 			for i = 0, byte_count - 1 do
-                local j = i * 8
-                pushbool(cursor, value[j + 1], value[j + 2], value[j + 3], value[j + 4], value[j + 5], value[j + 6], value[j + 7], value[j + 8])
+				local j = i * 8
+				pushbool(cursor, value[j + 1], value[j + 2], value[j + 3], value[j + 4], value[j + 5], value[j + 6], value[j + 7], value[j + 8])
 			end
 		end,
 		pop = function(cursor)
 			local result = table.create(byte_count * 8, false) :: {boolean}
 			for i = 0, byte_count - 1 do
-                local j = i * 8
-                result[j + 1], result[j + 2], result[j + 3], result[j + 4], result[j + 5], result[j + 6], result[j + 7], result[j + 8] = popbool(cursor)
+				local j = i * 8
+				result[j + 1], result[j + 2], result[j + 3], result[j + 4], result[j + 5], result[j + 6], result[j + 7], result[j + 8] = popbool(cursor)
 			end
 			return result
 		end,
 	}
-	
+
 	bitarray_descriptor_cache[byte_count] = descriptor
-	
+
 	return descriptor
 end
 
 local set_descriptor_cache = {}
 local function set_descriptor<T>(set: {string}): Descriptor<EitherOr<T, {[string]: boolean?}>>
-    if set_descriptor_cache[set] then
-        return set_descriptor_cache[set]
-    end
+	if set_descriptor_cache[set] then
+		return set_descriptor_cache[set]
+	end
 
-    local name_to_index = {}
-    for i, name in set :: {string} do
-        name_to_index[name] = i
-    end
+	local name_to_index = {}
+	for i, name in set :: {string} do
+		name_to_index[name] = i
+	end
 
-    local len = #set
-    local bitarray = bitarray_descriptor(math.ceil(len / 8))
-    local bitarray_push, bitarray_pop = bitarray.push, bitarray.pop
+	local len = #set
+	local bitarray = bitarray_descriptor(math.ceil(len / 8))
+	local bitarray_push, bitarray_pop = bitarray.push, bitarray.pop
 
-    local descriptor: Descriptor<T> = {
-        push = function(cursor, value: {[string]: boolean?})
-            local bools = table.create(len, false)
+	local descriptor: Descriptor<T> = {
+		push = function(cursor, value: {[string]: boolean?})
+			local bools = table.create(len, false)
 
-            for name, bool in value do
-                if bool == true then
-                    bools[name_to_index[name]] = true
-                end
-            end
+			for name, bool in value do
+				if bool == true then
+					bools[name_to_index[name]] = true
+				end
+			end
 
-            bitarray_push(cursor, bools :: {boolean})
-        end,
-        pop = function(cursor)
-            local bools = bitarray_pop(cursor)
-            local result = {}
+			bitarray_push(cursor, bools :: {boolean})
+		end,
+		pop = function(cursor)
+			local bools = bitarray_pop(cursor)
+			local result = {}
 
-            for i, name in set :: {string} do
-                if bools[i] == true then
-                    result[name] = true
-                end
-            end
+			for i, name in set :: {string} do
+				if bools[i] == true then
+					result[name] = true
+				end
+			end
 
-            return result
-        end,
-    }
+			return result
+		end,
+	}
 
-    set_descriptor_cache[set] = descriptor
+	set_descriptor_cache[set] = descriptor
 
-    return descriptor
+	return descriptor
 end
 
 local function T<T>(value: Descriptor<T>): T
@@ -1181,7 +1185,7 @@ return {
 	write_cursor = write_cursor,
 	read_cursor = read_cursor,
 	finalize = finalize,
-	
+
 	pushu8 = pushu8,
 	pushu16 = pushu16,
 	pushu24 = pushu24,
@@ -1192,7 +1196,7 @@ return {
 	popu24 = popu24,
 	popu32 = popu32,
 	popu53 = popu53,
-	
+
 	pushi8 = pushi8,
 	pushi16 = pushi16,
 	pushi24 = pushi24,
@@ -1203,61 +1207,61 @@ return {
 	popi24 = popi24,
 	popi32 = popi32,
 	popi53 = popi53,
-	
+
 	pushf16 = pushf16,
 	pushf32 = pushf32,
 	pushf64 = pushf64,
 	popf16 = popf16,
 	popf32 = popf32,
 	popf64 = popf64,
-	
+
 	pushvlq = pushvlq,
 	popvlq = popvlq,
-	
+
 	pushbuffer = pushbuffer,
 	popbuffer = popbuffer,
-	
+
 	pushbool = pushbool,
 	popbool = popbool,
-	
+
 	pushstring = pushstring,
 	popstring = popstring,
-	
+
 	pushcolor3 = pushcolor3,
 	popcolor3 = popcolor3,
-	
+
 	pushopt = pushopt,
 	popopt = popopt,
 	mark_opt = mark_opt,
-	
+
 	u8 = u8_descriptor,
 	u16 = u16_descriptor,
 	u24 = u24_descriptor,
 	u32 = u32_descriptor,
 	u53 = u53_descriptor,
-	
+
 	i8 = i8_descriptor,
 	i16 = i16_descriptor,
 	i24 = i24_descriptor,
 	i32 = i32_descriptor,
 	i53 = i53_descriptor,
-	
+
 	f16 = f16_descriptor,
 	f32 = f32_descriptor,
 	f64 = f64_descriptor,
-	
+
 	vlq = vlq_descriptor,
 	svlq = svlq_descriptor,
-	
+
 	buffer_descriptor = buffer_descriptor,
-	
+
 	bool = bool_descriptor,
 	bool_simple = bool_simple_descriptor,
-	
+
 	string = string_descriptor,
-	
+
 	color3_descriptor = color3_descriptor,
-	
+
 	literal = literal_descriptor,
 	vector = vector_descriptor,
 	opt = opt_descriptor,
@@ -1267,7 +1271,7 @@ return {
 	cframe = cframe_descriptor,
 	variant = variant_descriptor,
 	bitarray = bitarray_descriptor,
-    set = set_descriptor,
-	
+	set = set_descriptor,
+
 	T = T
 }
