@@ -245,34 +245,6 @@ local function inverse_table<T>(tbl: {T}): {[T]: number}
 	return inverse
 end
 
-local function matches(arg1: any, arg2: any): boolean
-	if not (arg1 and arg2) then
-		return false
-	end
-
-	local type1, type2 = typeof(arg1), typeof(arg2)
-	if type1 ~= type2 then
-		return false
-	end
-
-	if type1 == "table" then
-		for key, value in arg1 do
-			if not matches(arg2[key], value) then
-				return false
-			end
-		end
-		for key, value in arg2 do
-			if not matches(arg1[key], value) then
-				return false
-			end
-		end
-	else
-		return arg1 == arg2
-	end
-
-	return false
-end
-
 local function write_cursor(global_offset: number?): WriteCursor
 	return {
 		pos = global_offset or 0,
@@ -290,8 +262,11 @@ local function finalize(cursor: WriteCursor): buffer
 end
 
 local function read_cursor(buff: buffer): ReadCursor
-	assert(buffer.len(buff) <= RESERVED_BUFFER_SIZE, "input buffer size exceeds maximum possible size")
-	
+	local buffer_len = buffer.len(buff)
+	if buffer_len > RESERVED_BUFFER_SIZE then
+		error(string.format("input buffer size exceeds maximum size %d, got %d", RESERVED_BUFFER_SIZE, buffer_len))
+	end
+
 	return {
 		pos = 0,
 		buff = buff
@@ -443,11 +418,11 @@ end
 
 local function pushvlq(cursor: WriteCursor, value: number)
 	repeat
-		local byte = value % 128
-		value = (value - byte) / 128
+		local byte = value % 2^7
+		value = (value - byte) / 2^7
 
 		if value > 0 then
-			byte += 128
+			byte += 2^7
 		end
 
 		pushu8(cursor, byte)
@@ -460,11 +435,11 @@ local function popvlq(cursor: ReadCursor): number
 
 	repeat
 		local byte = popu8(cursor)
-		local chunk = byte % 128
+		local chunk = byte % 2^7
 
 		result += chunk * shift
-		shift *= 128
-	until byte < 128
+		shift *= 2^7
+	until byte < 2^7
 
 	return result
 end
@@ -504,28 +479,28 @@ end
 
 local function pushbool(cursor: WriteCursor, a: boolean, b: boolean?, c: boolean?, d: boolean?, e: boolean?, f: boolean?, g: boolean?, h: boolean?)
 	pushu8(cursor,
-		(a and 1 or 0) +
-		(b and 2 or 0) +
-		(c and 4 or 0) +
-		(d and 8 or 0) +
-		(e and 16 or 0) +
-		(f and 32 or 0) +
-		(g and 64 or 0) +
-		(h and 128 or 0)
+		(a and 2^0 or 0) +
+		(b and 2^1 or 0) +
+		(c and 2^2 or 0) +
+		(d and 2^3 or 0) +
+		(e and 2^4 or 0) +
+		(f and 2^5 or 0) +
+		(g and 2^6 or 0) +
+		(h and 2^7 or 0)
 	)
 end
 
 local function popbool(cursor: ReadCursor): (boolean, boolean, boolean, boolean, boolean, boolean, boolean, boolean)
 	local value = popu8(cursor)
 	return
-		bit32.band(value, 1) ~= 0,
-		bit32.band(value, 2) ~= 0,
-		bit32.band(value, 4) ~= 0,
-		bit32.band(value, 8) ~= 0,
-		bit32.band(value, 16) ~= 0,
-		bit32.band(value, 32) ~= 0,
-		bit32.band(value, 64) ~= 0,
-		bit32.band(value, 128) ~= 0
+		bit32.band(value, 2^0) ~= 0,
+		bit32.band(value, 2^1) ~= 0,
+		bit32.band(value, 2^2) ~= 0,
+		bit32.band(value, 2^3) ~= 0,
+		bit32.band(value, 2^4) ~= 0,
+		bit32.band(value, 2^5) ~= 0,
+		bit32.band(value, 2^6) ~= 0,
+		bit32.band(value, 2^7) ~= 0
 end
 
 local function pushbool_simple(cursor: WriteCursor, value: boolean)
@@ -694,7 +669,9 @@ local function literal_descriptor<T>(literals: {T}): Descriptor<T>
 		return literal_descriptor_cache[literals]
 	end
 
-	assert(#literals < 256, "cannot have more than 255 literals")
+	if #literals > 255 then
+		error(string.format("cannot have more than 255 literals, got %d", #literals))
+	end
 
 	local inverse_literals = inverse_table(literals)
 
@@ -857,7 +834,10 @@ local function struct_descriptor_hidden<T>(struct: T): Descriptor<T>
 			} :: OptStructField)
 
 			opt_count += 1
-			assert(opt_count <= 32, "structs can not house more than 32 optional fields")
+			
+			if opt_count > 32 then
+				error(string.format("structs can not have more than 32 optional fields, got %d", opt_count))
+			end
 		else
 			table.insert(fields, {
 				name = name,
@@ -995,19 +975,20 @@ local id_to_rotation = {
 }
 
 local rotation_to_id: {[number]: {[number]: {[number]: number}}} = {}
+do
+	for id, cframe in id_to_rotation do
+		local x, y, z = cframe:ToOrientation()
 
-for id, cframe in id_to_rotation do
-	local x, y, z = cframe:ToOrientation()
-
-	rotation_to_id[x] = rotation_to_id[x] or {}
-	rotation_to_id[x][y] = rotation_to_id[x][y] or {}
-	rotation_to_id[x][y][z] = id
+		rotation_to_id[x] = rotation_to_id[x] or {}
+		rotation_to_id[x][y] = rotation_to_id[x][y] or {}
+		rotation_to_id[x][y][z] = id
+	end
 end
 
 local cframe_descriptor_cache = {}
 local function cframe_descriptor(position_descriptor: Descriptor<number>, position_scale: number?): Descriptor<CFrame>
 	if cframe_descriptor_cache[position_descriptor] then
-		warn("cached cframe descriptors may not have the same position_scale if a different one was defined")
+		warn("cached cframe descriptors may not have the same position_scale if a different position_scale was defined")
 		return cframe_descriptor_cache[position_descriptor]
 	end
 
