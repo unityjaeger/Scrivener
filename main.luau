@@ -290,7 +290,7 @@ local function finalize(cursor: WriteCursor): buffer
 end
 
 local function read_cursor(buff: buffer): ReadCursor
-	assert(buffer.len(buff) > RESERVED_BUFFER_SIZE, "input buffer size exceeds maximum possible size")
+	assert(buffer.len(buff) <= RESERVED_BUFFER_SIZE, "input buffer size exceeds maximum possible size")
 	
 	return {
 		pos = 0,
@@ -505,13 +505,13 @@ end
 local function pushbool(cursor: WriteCursor, a: boolean, b: boolean?, c: boolean?, d: boolean?, e: boolean?, f: boolean?, g: boolean?, h: boolean?)
 	pushu8(cursor,
 		(a and 1 or 0) +
-			(b and 2 or 0) +
-			(c and 4 or 0) +
-			(d and 8 or 0) +
-			(e and 16 or 0) +
-			(f and 32 or 0) +
-			(g and 64 or 0) +
-			(h and 128 or 0)
+		(b and 2 or 0) +
+		(c and 4 or 0) +
+		(d and 8 or 0) +
+		(e and 16 or 0) +
+		(f and 32 or 0) +
+		(g and 64 or 0) +
+		(h and 128 or 0)
 	)
 end
 
