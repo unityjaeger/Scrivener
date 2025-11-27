@@ -1108,24 +1108,15 @@ local function bitarray_descriptor(byte_count: number): Descriptor<{boolean}>
 	local descriptor: Descriptor<{boolean}> = {
 		push = function(cursor, value: {boolean})
 			for i = 0, byte_count - 1 do
-				local byte = 0
-				for j = 0, 7 do
-					local index = i * 8 + j + 1
-					byte = bit32.bor(byte, bit32.lshift(value[index] == true and 1 or 0, j))
-				end
-				pushu8(cursor, byte)
+                local j = i * 8
+                pushbool(cursor, value[j + 1], value[j + 2], value[j + 3], value[j + 4], value[j + 5], value[j + 6], value[j + 7], value[j + 8])
 			end
 		end,
 		pop = function(cursor)
 			local result = table.create(byte_count * 8, false) :: {boolean}
 			for i = 0, byte_count - 1 do
-				local byte = popu8(cursor)
-				for j = 0, 7 do
-					if bit32.band(bit32.rshift(byte, j), 1) == 1 then
-						local index = i * 8 + j + 1
-						result[index] = true
-					end
-				end
+                local j = i * 8
+                result[j + 1], result[j + 2], result[j + 3], result[j + 4], result[j + 5], result[j + 6], result[j + 7], result[j + 8] = popbool(cursor)
 			end
 			return result
 		end,
