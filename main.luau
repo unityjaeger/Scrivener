@@ -1185,6 +1185,10 @@ local function T<T>(value: Descriptor<T>): T
 	return value
 end
 
+local function get_reserved_buffer(): buffer
+	return RESERVED_BUFFER
+end
+
 return {
 	write_cursor = write_cursor,
 	read_cursor = read_cursor,
@@ -1277,5 +1281,6 @@ return {
 	bitarray = bitarray_descriptor,
 	set = set_descriptor,
 
-	T = T
+	T = T,
+	get_reserved_buffer = get_reserved_buffer
 }
