@@ -17,14 +17,14 @@ export type ReadCursor = {
 }
 
 export type Descriptor<T> = {
-	push: (cursor: WriteCursor, value: T) -> (),
-	pop: (cursor: ReadCursor) -> T,
+	write: (cursor: WriteCursor, value: T) -> (),
+	read: (cursor: ReadCursor) -> T,
 	optional: boolean?
 }
 
 export type TupleDescriptor<T...> = {
-	push: (cursor: WriteCursor, T...) -> (),
-	pop: (cursor: ReadCursor) -> T...
+	write: (cursor: WriteCursor, T...) -> (),
+	read: (cursor: ReadCursor) -> T...
 }
 
 type StructField = Descriptor<any> & {
@@ -56,7 +56,7 @@ type function GetDescriptorType(t: type)
 		return types.never
 	end
 
-	local des_fn = t:readproperty(types.singleton("pop"))
+	local des_fn = t:readproperty(types.singleton("read"))
 	if not des_fn or not des_fn:is("function") then
 		return types.never
 	end
@@ -126,7 +126,7 @@ type function VariantTransformer(t: type)
 	return intersect :: any
 end
 
-local function writei24(buff: buffer, offset: number, value: number): ()
+local function writei24_helper(buff: buffer, offset: number, value: number): ()
 	if value < 0 then
 		value = value + 16777216
 	end
@@ -134,7 +134,7 @@ local function writei24(buff: buffer, offset: number, value: number): ()
 	buffer.writeu8(buff, offset + 2, value)
 end
 
-local function readi24(buff: buffer, offset: number): number
+local function readi24_helper(buff: buffer, offset: number): number
 	local value = 256 * buffer.readu16(buff, offset) + buffer.readu8(buff, offset + 2)
 	if value >= 8388608 then
 		return value - 16777216
@@ -142,41 +142,41 @@ local function readi24(buff: buffer, offset: number): number
 	return value
 end
 
-local function writeu24(buff: buffer, offset: number, value: number): ()
+local function writeu24_helper(buff: buffer, offset: number, value: number): ()
 	buffer.writeu16(buff, offset, value / 256)
 	buffer.writeu8(buff, offset + 2, value)
 end
 
-local function readu24(buff: buffer, offset: number): number
+local function readu24_helper(buff: buffer, offset: number): number
 	return 256 * buffer.readu16(buff, offset) + buffer.readu8(buff, offset + 2)
 end
 
-local function writeu53(buff: buffer, offset: number, value: number): ()
+local function writeu53_helper(buff: buffer, offset: number, value: number): ()
 	buffer.writeu32(buff, offset, value / 16777216)
-	writeu24(buff, offset + 4, value)
+	writeu24_helper(buff, offset + 4, value)
 end
 
-local function readu53(buff: buffer, offset: number): number
-	return 16777216 * buffer.readu32(buff, offset) + readu24(buff, offset + 4)
+local function readu53_helper(buff: buffer, offset: number): number
+	return 16777216 * buffer.readu32(buff, offset) + readu24_helper(buff, offset + 4)
 end
 
-local function writei53(buff: buffer, offset: number, value: number): ()
+local function writei53_helper(buff: buffer, offset: number, value: number): ()
 	if value < 0 then
 		value = value + 9007199254740992
 	end
 	buffer.writeu32(buff, offset, value / 16777216)
-	writeu24(buff, offset + 4, value)
+	writeu24_helper(buff, offset + 4, value)
 end
 
-local function readi53(buff: buffer, offset: number): number
-	local value = 16777216 * buffer.readu32(buff, offset) + readu24(buff, offset + 4)
+local function readi53_helper(buff: buffer, offset: number): number
+	local value = 16777216 * buffer.readu32(buff, offset) + readu24_helper(buff, offset + 4)
 	if value >= 4503599627370496 then
 		value = value - 9007199254740992
 	end
 	return value
 end
 
-local function writef16(buff: buffer, offset: number, value: number): ()
+local function writef16_helper(buff: buffer, offset: number, value: number): ()
 	if value ~= value then
 		buffer.writeu16(buff, offset, 0x7E01)
 		return
@@ -212,7 +212,7 @@ local function writef16(buff: buffer, offset: number, value: number): ()
 	))
 end
 
-local function readf16(buff: buffer, offset: number): number
+local function readf16_helper(buff: buffer, offset: number): number
 	local value = buffer.readu16(buff, offset)
 
 	local banded = bit32.band(value, 0x7C00)
@@ -273,150 +273,150 @@ local function read_cursor(buff: buffer): ReadCursor
 	}
 end
 
-local function pushu8(cursor: WriteCursor, value: number)
+local function writeu8(cursor: WriteCursor, value: number)
 	buffer.writeu8(RESERVED_BUFFER, cursor.pos, value)
 	cursor.pos += 1
 end
 
-local function pushu16(cursor: WriteCursor, value: number)
+local function writeu16(cursor: WriteCursor, value: number)
 	buffer.writeu16(RESERVED_BUFFER, cursor.pos, value)
 	cursor.pos += 2
 end
 
-local function pushu24(cursor: WriteCursor, value: number)
-	writeu24(RESERVED_BUFFER, cursor.pos, value)
+local function writeu24(cursor: WriteCursor, value: number)
+	writeu24_helper(RESERVED_BUFFER, cursor.pos, value)
 	cursor.pos += 3
 end
 
-local function pushu32(cursor: WriteCursor, value: number)
+local function writeu32(cursor: WriteCursor, value: number)
 	buffer.writeu32(RESERVED_BUFFER, cursor.pos, value)
 	cursor.pos += 4
 end
 
-local function pushu53(cursor: WriteCursor, value: number)
-	writeu53(RESERVED_BUFFER, cursor.pos, value)
+local function writeu53(cursor: WriteCursor, value: number)
+	writeu53_helper(RESERVED_BUFFER, cursor.pos, value)
 	cursor.pos += 7
 end
 
-local function popu8(cursor: ReadCursor): number
+local function readu8(cursor: ReadCursor): number
 	local value = buffer.readu8(cursor.buff, cursor.pos)
 	cursor.pos += 1
 	return value
 end
 
-local function popu16(cursor: ReadCursor): number
+local function readu16(cursor: ReadCursor): number
 	local value = buffer.readu16(cursor.buff, cursor.pos)
 	cursor.pos += 2
 	return value
 end
 
-local function popu24(cursor: ReadCursor): number
-	local value = readu24(cursor.buff, cursor.pos)
+local function readu24(cursor: ReadCursor): number
+	local value = readu24_helper(cursor.buff, cursor.pos)
 	cursor.pos += 3
 	return value
 end
 
-local function popu32(cursor: ReadCursor): number
+local function readu32(cursor: ReadCursor): number
 	local value = buffer.readu32(cursor.buff, cursor.pos)
 	cursor.pos += 4
 	return value
 end
 
-local function popu53(cursor: ReadCursor): number
-	local value = readu53(cursor.buff, cursor.pos)
+local function readu53(cursor: ReadCursor): number
+	local value = readu53_helper(cursor.buff, cursor.pos)
 	cursor.pos += 7
 	return value
 end
 
-local function pushi8(cursor: WriteCursor, value: number)
+local function writei8(cursor: WriteCursor, value: number)
 	buffer.writei8(RESERVED_BUFFER, cursor.pos, value)
 	cursor.pos += 1
 end
 
-local function pushi16(cursor: WriteCursor, value: number)
+local function writei16(cursor: WriteCursor, value: number)
 	buffer.writei16(RESERVED_BUFFER, cursor.pos, value)
 	cursor.pos += 2
 end
 
-local function pushi24(cursor: WriteCursor, value: number)
-	writei24(RESERVED_BUFFER, cursor.pos, value)
+local function writei24(cursor: WriteCursor, value: number)
+	writei24_helper(RESERVED_BUFFER, cursor.pos, value)
 	cursor.pos += 3
 end
 
-local function pushi32(cursor: WriteCursor, value: number)
+local function writei32(cursor: WriteCursor, value: number)
 	buffer.writei32(RESERVED_BUFFER, cursor.pos, value)
 	cursor.pos += 4
 end
 
-local function pushi53(cursor: WriteCursor, value: number)
-	writei53(RESERVED_BUFFER, cursor.pos, value)
+local function writei53(cursor: WriteCursor, value: number)
+	writei53_helper(RESERVED_BUFFER, cursor.pos, value)
 	cursor.pos += 7
 end
 
-local function popi8(cursor: ReadCursor): number
+local function readi8(cursor: ReadCursor): number
 	local value = buffer.readi8(cursor.buff, cursor.pos)
 	cursor.pos += 1
 	return value
 end
 
-local function popi16(cursor: ReadCursor): number
+local function readi16(cursor: ReadCursor): number
 	local value = buffer.readi16(cursor.buff, cursor.pos)
 	cursor.pos += 2
 	return value
 end
 
-local function popi24(cursor: ReadCursor): number
-	local value = readi24(cursor.buff, cursor.pos)
+local function readi24(cursor: ReadCursor): number
+	local value = readi24_helper(cursor.buff, cursor.pos)
 	cursor.pos += 3
 	return value
 end
 
-local function popi32(cursor: ReadCursor): number
+local function readi32(cursor: ReadCursor): number
 	local value = buffer.readi32(cursor.buff, cursor.pos)
 	cursor.pos += 4
 	return value
 end
 
-local function popi53(cursor: ReadCursor): number
-	local value = readi53(cursor.buff, cursor.pos)
+local function readi53(cursor: ReadCursor): number
+	local value = readi53_helper(cursor.buff, cursor.pos)
 	cursor.pos += 7
 	return value
 end
 
-local function pushf16(cursor: WriteCursor, value: number)
-	writef16(RESERVED_BUFFER, cursor.pos, value)
+local function writef16(cursor: WriteCursor, value: number)
+	writef16_helper(RESERVED_BUFFER, cursor.pos, value)
 	cursor.pos += 2
 end
 
-local function pushf32(cursor: WriteCursor, value: number)
+local function writef32(cursor: WriteCursor, value: number)
 	buffer.writef32(RESERVED_BUFFER, cursor.pos, value)
 	cursor.pos += 4
 end
 
-local function pushf64(cursor: WriteCursor, value: number)
+local function writef64(cursor: WriteCursor, value: number)
 	buffer.writef64(RESERVED_BUFFER, cursor.pos, value)
 	cursor.pos += 8
 end
 
-local function popf16(cursor: ReadCursor): number
-	local value = readf16(cursor.buff, cursor.pos)
+local function readf16(cursor: ReadCursor): number
+	local value = readf16_helper(cursor.buff, cursor.pos)
 	cursor.pos += 2
 	return value
 end
 
-local function popf32(cursor: ReadCursor): number
+local function readf32(cursor: ReadCursor): number
 	local value = buffer.readf32(cursor.buff, cursor.pos)
 	cursor.pos += 4
 	return value
 end
 
-local function popf64(cursor: ReadCursor): number
+local function readf64(cursor: ReadCursor): number
 	local value = buffer.readf64(cursor.buff, cursor.pos)
 	cursor.pos += 8
 	return value
 end
 
-local function pushvlq(cursor: WriteCursor, value: number)
+local function writevlq(cursor: WriteCursor, value: number)
 	repeat
 		local byte = value % 2^7
 		value = (value - byte) / 2^7
@@ -425,16 +425,16 @@ local function pushvlq(cursor: WriteCursor, value: number)
 			byte += 2^7
 		end
 
-		pushu8(cursor, byte)
+		writeu8(cursor, byte)
 	until value == 0
 end
 
-local function popvlq(cursor: ReadCursor): number
+local function readvlq(cursor: ReadCursor): number
 	local result = 0
 	local shift = 1
 
 	repeat
-		local byte = popu8(cursor)
+		local byte = readu8(cursor)
 		local chunk = byte % 2^7
 
 		result += chunk * shift
@@ -444,16 +444,16 @@ local function popvlq(cursor: ReadCursor): number
 	return result
 end
 
-local function pushsvlq(cursor: WriteCursor, value: number)
+local function writesvlq(cursor: WriteCursor, value: number)
 	if value >= 0 then
-		pushvlq(cursor, value * 2)
+		writevlq(cursor, value * 2)
 	else
-		pushvlq(cursor, -value * 2 - 1)
+		writevlq(cursor, -value * 2 - 1)
 	end
 end
 
-local function popsvlq(cursor: ReadCursor): number
-	local value = popvlq(cursor)
+local function readsvlq(cursor: ReadCursor): number
+	local value = readvlq(cursor)
 
 	if value % 2 == 0 then
 		return value / 2
@@ -462,23 +462,23 @@ local function popsvlq(cursor: ReadCursor): number
 	end
 end
 
-local function pushbuffer(cursor: WriteCursor, value: buffer)
+local function writebuffer(cursor: WriteCursor, value: buffer)
 	local len = buffer.len(value)
-	pushvlq(cursor, len)
+	writevlq(cursor, len)
 	buffer.copy(RESERVED_BUFFER, cursor.pos, value, 0)
 	cursor.pos += len
 end
 
-local function popbuffer(cursor: ReadCursor): buffer
-	local len = popvlq(cursor)
+local function readbuffer(cursor: ReadCursor): buffer
+	local len = readvlq(cursor)
 	local result = buffer.create(len)
 	buffer.copy(result, 0, cursor.buff, cursor.pos, len)
 	cursor.pos += len
 	return result
 end
 
-local function pushbool(cursor: WriteCursor, a: boolean, b: boolean?, c: boolean?, d: boolean?, e: boolean?, f: boolean?, g: boolean?, h: boolean?)
-	pushu8(cursor,
+local function writebool(cursor: WriteCursor, a: boolean, b: boolean?, c: boolean?, d: boolean?, e: boolean?, f: boolean?, g: boolean?, h: boolean?)
+	writeu8(cursor,
 		(a and 2^0 or 0) +
 		(b and 2^1 or 0) +
 		(c and 2^2 or 0) +
@@ -490,8 +490,8 @@ local function pushbool(cursor: WriteCursor, a: boolean, b: boolean?, c: boolean
 	)
 end
 
-local function popbool(cursor: ReadCursor): (boolean, boolean, boolean, boolean, boolean, boolean, boolean, boolean)
-	local value = popu8(cursor)
+local function readbool(cursor: ReadCursor): (boolean, boolean, boolean, boolean, boolean, boolean, boolean, boolean)
+	local value = readu8(cursor)
 	return
 		bit32.band(value, 2^0) ~= 0,
 		bit32.band(value, 2^1) ~= 0,
@@ -503,55 +503,55 @@ local function popbool(cursor: ReadCursor): (boolean, boolean, boolean, boolean,
 		bit32.band(value, 2^7) ~= 0
 end
 
-local function pushbool_simple(cursor: WriteCursor, value: boolean)
-	pushu8(cursor, value and 1 or 0)
+local function writebool_simple(cursor: WriteCursor, value: boolean)
+	writeu8(cursor, value and 1 or 0)
 end
 
-local function popboool_simple(cursor: ReadCursor): boolean
-	return popu8(cursor) == 1
+local function readboool_simple(cursor: ReadCursor): boolean
+	return readu8(cursor) == 1
 end
 
-local function pushstring(cursor: WriteCursor, value: string)
+local function writestring(cursor: WriteCursor, value: string)
 	local len = string.len(value)
-	pushvlq(cursor, len)
+	writevlq(cursor, len)
 	buffer.writestring(RESERVED_BUFFER, cursor.pos, value)
 	cursor.pos += len
 end
 
-local function popstring(cursor: ReadCursor): string
-	local len = popvlq(cursor)
+local function readstring(cursor: ReadCursor): string
+	local len = readvlq(cursor)
 	local value = buffer.readstring(cursor.buff, cursor.pos, len)
 	cursor.pos += len
 	return value
 end
 
-local function pushcolor3(cursor: WriteCursor, value: Color3)
-	pushu8(cursor, value.R * 255)
-	pushu8(cursor, value.G * 255)
-	pushu8(cursor, value.B * 255)
+local function writecolor3(cursor: WriteCursor, value: Color3)
+	writeu8(cursor, value.R * 255)
+	writeu8(cursor, value.G * 255)
+	writeu8(cursor, value.B * 255)
 end
 
-local function popcolor3(cursor: ReadCursor): Color3
+local function readcolor3(cursor: ReadCursor): Color3
 	return Color3.fromRGB(
-		popu8(cursor),
-		popu8(cursor),
-		popu8(cursor)
+		readu8(cursor),
+		readu8(cursor),
+		readu8(cursor)
 	)
 end
 
-local function pushopt<T>(cursor: WriteCursor, push_method: (cursor: WriteCursor, value: T) -> (), value: T?)
+local function writeopt<T>(cursor: WriteCursor, write_method: (cursor: WriteCursor, value: T) -> (), value: T?)
 	if value == nil then
-		pushu8(cursor, 0)
+		writeu8(cursor, 0)
 	else
-		pushu8(cursor, 1)
-		push_method(cursor, value)
+		writeu8(cursor, 1)
+		write_method(cursor, value)
 	end
 end
 
-local function popopt<T>(cursor: ReadCursor, pop_method: (cursor: ReadCursor) -> T): T?
-	local present = popu8(cursor)
+local function readopt<T>(cursor: ReadCursor, read_method: (cursor: ReadCursor) -> T): T?
+	local present = readu8(cursor)
 	if present == 1 then
-		return pop_method(cursor)
+		return read_method(cursor)
 	else
 		return nil
 	end
@@ -564,103 +564,103 @@ local function mark_opt<T>(inner: Descriptor<T>): Descriptor<T?>
 end
 
 local u8_descriptor: Descriptor<number> = {
-	push = pushu8,
-	pop = popu8,
+	write = writeu8,
+	read = readu8,
 }
 
 local u16_descriptor: Descriptor<number> = {
-	push = pushu16,
-	pop = popu16,
+	write = writeu16,
+	read = readu16,
 }
 
 local u24_descriptor: Descriptor<number> = {
-	push = pushu24,
-	pop = popu24,
+	write = writeu24,
+	read = readu24,
 }
 
 local u32_descriptor: Descriptor<number> = {
-	push = pushu32,
-	pop = popu32,
+	write = writeu32,
+	read = readu32,
 }
 
 local u53_descriptor: Descriptor<number> = {
-	push = pushu53,
-	pop = popu53,
+	write = writeu53,
+	read = readu53,
 }
 
 local i8_descriptor: Descriptor<number> = {
-	push = pushi8,
-	pop = popi8,
+	write = writei8,
+	read = readi8,
 }
 
 local i16_descriptor: Descriptor<number> = {
-	push = pushi16,
-	pop = popi16,
+	write = writei16,
+	read = readi16,
 }
 
 local i24_descriptor: Descriptor<number> = {
-	push = pushi24,
-	pop = popi24,
+	write = writei24,
+	read = readi24,
 }
 
 local i32_descriptor: Descriptor<number> = {
-	push = pushi32,
-	pop = popi32,
+	write = writei32,
+	read = readi32,
 }
 
 local i53_descriptor: Descriptor<number> = {
-	push = pushi53,
-	pop = popi53,
+	write = writei53,
+	read = readi53,
 }
 
 local f16_descriptor: Descriptor<number> = {
-	push = pushf16,
-	pop = popf16,
+	write = writef16,
+	read = readf16,
 }
 
 local f32_descriptor: Descriptor<number> = {
-	push = pushf32,
-	pop = popf32,
+	write = writef32,
+	read = readf32,
 }
 
 local f64_descriptor: Descriptor<number> = {
-	push = pushf64,
-	pop = popf64,
+	write = writef64,
+	read = readf64,
 }
 
 local vlq_descriptor: Descriptor<number> = {
-	push = pushvlq,
-	pop = popvlq,
+	write = writevlq,
+	read = readvlq,
 }
 
 local svlq_descriptor: Descriptor<number> = {
-	push = pushsvlq,
-	pop = popsvlq
+	write = writesvlq,
+	read = readsvlq
 }
 
 local buffer_descriptor: Descriptor<buffer> = {
-	push = pushbuffer,
-	pop = popbuffer
+	write = writebuffer,
+	read = readbuffer
 }
 
 local string_descriptor: Descriptor<string> = {
-	push = pushstring,
-	pop = popstring,
+	write = writestring,
+	read = readstring,
 }
 
 local bool_descriptor: TupleDescriptor<...boolean> = {
-	push = pushbool,
-	pop = popbool
+	write = writebool,
+	read = readbool
 }
 
 local bool_simple_descriptor: Descriptor<boolean> = {
-	push = pushbool_simple,
-	pop = popboool_simple
+	write = writebool_simple,
+	read = readboool_simple
 }
 
 local color3_descriptor: Descriptor<Color3> = {
-	push = pushcolor3,
-	pop = popcolor3
+	write = writecolor3,
+	read = readcolor3
 }
 
 local literal_descriptor_cache = {}
@@ -676,12 +676,12 @@ local function literal_descriptor<T>(literals: {T}): Descriptor<T>
 	local inverse_literals = inverse_table(literals)
 
 	local descriptor: Descriptor<T> = {
-		push = function(cursor, value: T)
+		write = function(cursor, value: T)
 			local index = inverse_literals[value]
-			pushu8(cursor, index - 1)
+			writeu8(cursor, index - 1)
 		end,
-		pop = function(cursor)
-			local index = popu8(cursor)
+		read = function(cursor)
+			local index = readu8(cursor)
 			return literals[index + 1]
 		end,
 	}
@@ -697,19 +697,19 @@ local function vector_descriptor<number>(number_descriptor: Descriptor<number>):
 		return vector_descriptor_cache[number_descriptor]
 	end
 
-	local push, pop = number_descriptor.push, number_descriptor.pop
+	local write, read = number_descriptor.write, number_descriptor.read
 
 	local descriptor: Descriptor<vector> = {
-		push = function(cursor, value: vector)
-			push(cursor, value.x)
-			push(cursor, value.y)
-			push(cursor, value.z)
+		write = function(cursor, value: vector)
+			write(cursor, value.x)
+			write(cursor, value.y)
+			write(cursor, value.z)
 		end,
-		pop = function(cursor)
+		read = function(cursor)
 			return vector.create(
-				pop(cursor),
-				pop(cursor),
-				pop(cursor)
+				read(cursor),
+				read(cursor),
+				read(cursor)
 			)
 		end,
 	}
@@ -725,22 +725,22 @@ local function opt_descriptor<T>(inner: Descriptor<T>): Descriptor<T?>
 		return opt_descriptor_cache[inner]
 	end
 
-	local push, pop = inner.push, inner.pop
+	local write, read = inner.write, inner.read
 
 	--inline for slightly better speed yknow
 	local descriptor: Descriptor<T?> = {
-		push = function(cursor, value: T?)
+		write = function(cursor, value: T?)
 			if value == nil then
-				pushu8(cursor, 0)
+				writeu8(cursor, 0)
 			else
-				pushu8(cursor, 1)
-				push(cursor, value)
+				writeu8(cursor, 1)
+				write(cursor, value)
 			end
 		end,
-		pop = function(cursor)
-			local present = popu8(cursor)
+		read = function(cursor)
+			local present = readu8(cursor)
 			if present == 1 then
-				return pop(cursor)
+				return read(cursor)
 			else
 				return nil
 			end
@@ -754,15 +754,15 @@ end
 
 local function simple_struct<T>(fields: {StructField}): Descriptor<T>
 	return {
-		push = function(cursor, value)
+		write = function(cursor, value)
 			for _, inner in fields do
-				inner.push(cursor, value[inner.name])
+				inner.write(cursor, value[inner.name])
 			end
 		end,
-		pop = function(cursor)
+		read = function(cursor)
 			local result = {}
 			for _, inner in fields do
-				result[inner.name] = inner.pop(cursor)
+				result[inner.name] = inner.read(cursor)
 			end
 			return result
 		end,
@@ -770,10 +770,10 @@ local function simple_struct<T>(fields: {StructField}): Descriptor<T>
 end
 
 local function optional_struct<T>(fields: {StructField}, opt_fields: {OptStructField}, byte_descriptor: Descriptor<number>): Descriptor<T>
-	local push_byte, pop_byte = byte_descriptor.push, byte_descriptor.pop
+	local write_byte, read_byte = byte_descriptor.write, byte_descriptor.read
 
 	return {
-		push = function(cursor, value)
+		write = function(cursor, value)
 			local byte = 0
 			for _, inner in opt_fields do
 				local field_value = value[inner.name]
@@ -782,31 +782,31 @@ local function optional_struct<T>(fields: {StructField}, opt_fields: {OptStructF
 				end
 			end
 
-			push_byte(cursor, byte)
+			write_byte(cursor, byte)
 
 			for _, inner in opt_fields do
 				local field_value = value[inner.name]
 				if field_value ~= nil then
-					inner.push(cursor, field_value)
+					inner.write(cursor, field_value)
 				end
 			end
 
 			for _, inner in fields do
-				inner.push(cursor, value[inner.name])
+				inner.write(cursor, value[inner.name])
 			end
 		end,
-		pop = function(cursor)
+		read = function(cursor)
 			local result = {}
-			local byte = pop_byte(cursor)
+			local byte = read_byte(cursor)
 
 			for _, inner in opt_fields do
 				if bit32.band(byte, inner.bitmask) ~= 0 then
-					result[inner.name] = inner.pop(cursor)
+					result[inner.name] = inner.read(cursor)
 				end
 			end
 
 			for _, inner in fields do
-				result[inner.name] = inner.pop(cursor)
+				result[inner.name] = inner.read(cursor)
 			end
 
 			return result
@@ -828,8 +828,8 @@ local function struct_descriptor_hidden<T>(struct: T): Descriptor<T>
 		if inner.optional then
 			table.insert(opt_fields, {
 				name = name,
-				push = inner.push,
-				pop = inner.pop,
+				write = inner.write,
+				read = inner.read,
 				bitmask = bit32.lshift(1, opt_count)
 			} :: OptStructField)
 
@@ -841,8 +841,8 @@ local function struct_descriptor_hidden<T>(struct: T): Descriptor<T>
 		else
 			table.insert(fields, {
 				name = name,
-				push = inner.push,
-				pop = inner.pop
+				write = inner.write,
+				read = inner.read
 			} :: StructField)
 		end
 	end
@@ -883,20 +883,20 @@ local function array_descriptor<T>(element_descriptor: Descriptor<T>): Descripto
 		return array_descriptor_cache[element_descriptor]
 	end
 
-	local push, pop = element_descriptor.push, element_descriptor.pop
+	local write, read = element_descriptor.write, element_descriptor.read
 
 	local descriptor: Descriptor<{T}> = {
-		push = function(cursor, value: {T})
-			pushvlq(cursor, #value)
+		write = function(cursor, value: {T})
+			writevlq(cursor, #value)
 			for _, entry in value do
-				push(cursor, entry)
+				write(cursor, entry)
 			end
 		end,
-		pop = function(cursor)
-			local len = popvlq(cursor)
+		read = function(cursor)
+			local len = readvlq(cursor)
 			local result = table.create(len)
 			for i = 1, len do
-				table.insert(result, pop(cursor))
+				table.insert(result, read(cursor))
 			end
 			return result
 		end,
@@ -913,29 +913,29 @@ local function map_descriptor<K, V>(key_descriptor: Descriptor<K>, value_descrip
 		return map_descriptor_cache[key_descriptor][value_descriptor]
 	end
 
-	local key_push, key_pop = key_descriptor.push, key_descriptor.pop
-	local value_push, value_pop = value_descriptor.push, value_descriptor.pop
+	local key_write, key_read = key_descriptor.write, key_descriptor.read
+	local value_write, value_read = value_descriptor.write, value_descriptor.read
 
 	local descriptor: Descriptor<{[K]: V}> = {
-		push = function(cursor, value: {[K]: V})
+		write = function(cursor, value: {[K]: V})
 			local len = 0
 			for key, entry in value do
 				len += 1
 			end
 
-			pushvlq(cursor, len)
+			writevlq(cursor, len)
 
 			for key, entry in value do
-				key_push(cursor, key)
-				value_push(cursor, entry)
+				key_write(cursor, key)
+				value_write(cursor, entry)
 			end
 		end,
-		pop = function(cursor)
-			local len = popvlq(cursor)
+		read = function(cursor)
+			local len = readvlq(cursor)
 			local map = {}
 
 			for i = 1, len do
-				map[key_pop(cursor)] = value_pop(cursor)
+				map[key_read(cursor)] = value_read(cursor)
 			end
 
 			return map
@@ -992,46 +992,46 @@ local function cframe_descriptor(position_descriptor: Descriptor<number>, positi
 		return cframe_descriptor_cache[position_descriptor]
 	end
 
-	local position_push, position_pop = position_descriptor.push, position_descriptor.pop
+	local position_write, position_read = position_descriptor.write, position_descriptor.read
 
 	local scale = position_scale or 1
 
 	local descriptor: Descriptor<CFrame> = {
-		push = function(cursor, value: CFrame)
+		write = function(cursor, value: CFrame)
 			local rot_x, rot_y, rot_z = value:ToOrientation()
 			local id = rotation_to_id[rot_x] and rotation_to_id[rot_x][rot_y] and rotation_to_id[rot_x][rot_y][rot_z]
 			if id then
-				pushu8(cursor, id)
+				writeu8(cursor, id)
 			else
-				pushu8(cursor, 0)
-				pushu16(cursor, math.map(rot_x, -PI, PI, 0, 2^16 - 1))
-				pushu16(cursor, math.map(rot_y, -PI, PI, 0, 2^16 - 1))
-				pushu16(cursor, math.map(rot_z, -PI, PI, 0, 2^16 - 1))
+				writeu8(cursor, 0)
+				writeu16(cursor, math.map(rot_x, -PI, PI, 0, 2^16 - 1))
+				writeu16(cursor, math.map(rot_y, -PI, PI, 0, 2^16 - 1))
+				writeu16(cursor, math.map(rot_z, -PI, PI, 0, 2^16 - 1))
 			end
 
-			position_push(cursor, value.X * scale)
-			position_push(cursor, value.Y * scale)
-			position_push(cursor, value.Z * scale)
+			position_write(cursor, value.X * scale)
+			position_write(cursor, value.Y * scale)
+			position_write(cursor, value.Z * scale)
 		end,
-		pop = function(cursor)
-			local id = popu8(cursor)
+		read = function(cursor)
+			local id = readu8(cursor)
 			local angles = id_to_rotation[id]
 			if angles then
 				return CFrame.new(
-					position_pop(cursor) / scale,
-					position_pop(cursor) / scale,
-					position_pop(cursor) / scale
+					position_read(cursor) / scale,
+					position_read(cursor) / scale,
+					position_read(cursor) / scale
 				) * angles
 			else
-				local q_x = math.map(popu16(cursor), 0, 2^16 - 1, -PI, PI)
-				local q_y = math.map(popu16(cursor), 0, 2^16 - 1, -PI, PI)
-				local q_z = math.map(popu16(cursor), 0, 2^16 - 1, -PI, PI)
+				local q_x = math.map(readu16(cursor), 0, 2^16 - 1, -PI, PI)
+				local q_y = math.map(readu16(cursor), 0, 2^16 - 1, -PI, PI)
+				local q_z = math.map(readu16(cursor), 0, 2^16 - 1, -PI, PI)
 				local w = math.sqrt(1 - math.clamp(q_x * q_x + q_y * q_y + q_z * q_z, 0, 1))
 
 				return CFrame.new(
-					position_pop(cursor) / scale,
-					position_pop(cursor) / scale,
-					position_pop(cursor) / scale,
+					position_read(cursor) / scale,
+					position_read(cursor) / scale,
+					position_read(cursor) / scale,
 					q_x, q_y, q_z, w
 				)
 			end
@@ -1055,22 +1055,22 @@ local function variant_descriptor_hidden<T>(variants: T): Descriptor<T>
 	end
 
 	local kind_descriptor = literal_descriptor(literals)
-	local kind_push, kind_pop = kind_descriptor.push, kind_descriptor.pop
+	local kind_write, kind_read = kind_descriptor.write, kind_descriptor.read
 
 	local descriptor: Descriptor<{ kind: string, value: any }> = {
-		push = function(cursor, value)
+		write = function(cursor, value)
 			local kind = value.kind
 			local payload = value.value
 
 			local inner = (variants :: {[string]: Descriptor<any>})[kind]
-			kind_push(cursor, kind)
-			inner.push(cursor, payload)
+			kind_write(cursor, kind)
+			inner.write(cursor, payload)
 		end,
 
-		pop = function(cursor)
-			local kind = kind_pop(cursor)
+		read = function(cursor)
+			local kind = kind_read(cursor)
 			local inner = (variants :: {[string]: Descriptor<any>})[kind]
-			local payload = inner.pop(cursor)
+			local payload = inner.read(cursor)
 
 			return {
 				kind = kind,
@@ -1095,17 +1095,17 @@ local function bitarray_descriptor(byte_count: number): Descriptor<{boolean}>
 	end
 
 	local descriptor: Descriptor<{boolean}> = {
-		push = function(cursor, value: {boolean})
+		write = function(cursor, value: {boolean})
 			for i = 0, byte_count - 1 do
 				local j = i * 8
-				pushbool(cursor, value[j + 1], value[j + 2], value[j + 3], value[j + 4], value[j + 5], value[j + 6], value[j + 7], value[j + 8])
+				writebool(cursor, value[j + 1], value[j + 2], value[j + 3], value[j + 4], value[j + 5], value[j + 6], value[j + 7], value[j + 8])
 			end
 		end,
-		pop = function(cursor)
+		read = function(cursor)
 			local result = table.create(byte_count * 8, false) :: {boolean}
 			for i = 0, byte_count - 1 do
 				local j = i * 8
-				result[j + 1], result[j + 2], result[j + 3], result[j + 4], result[j + 5], result[j + 6], result[j + 7], result[j + 8] = popbool(cursor)
+				result[j + 1], result[j + 2], result[j + 3], result[j + 4], result[j + 5], result[j + 6], result[j + 7], result[j + 8] = readbool(cursor)
 			end
 			return result
 		end,
@@ -1129,10 +1129,10 @@ local function set_descriptor<T>(set: {string}): Descriptor<EitherOr<T, {[string
 
 	local len = #set
 	local bitarray = bitarray_descriptor(math.ceil(len / 8))
-	local bitarray_push, bitarray_pop = bitarray.push, bitarray.pop
+	local bitarray_write, bitarray_read = bitarray.write, bitarray.read
 
 	local descriptor: Descriptor<T> = {
-		push = function(cursor, value: {[string]: boolean?})
+		write = function(cursor, value: {[string]: boolean?})
 			local bools = table.create(len, false)
 
 			for name, bool in value do
@@ -1141,10 +1141,10 @@ local function set_descriptor<T>(set: {string}): Descriptor<EitherOr<T, {[string
 				end
 			end
 
-			bitarray_push(cursor, bools :: {boolean})
+			bitarray_write(cursor, bools :: {boolean})
 		end,
-		pop = function(cursor)
-			local bools = bitarray_pop(cursor)
+		read = function(cursor)
+			local bools = bitarray_read(cursor)
 			local result = {}
 
 			for i, name in set :: {string} do
@@ -1175,52 +1175,52 @@ return {
 	read_cursor = read_cursor,
 	finalize = finalize,
 
-	pushu8 = pushu8,
-	pushu16 = pushu16,
-	pushu24 = pushu24,
-	pushu32 = pushu32,
-	pushu53 = pushu53,
-	popu8 = popu8,
-	popu16 = popu16,
-	popu24 = popu24,
-	popu32 = popu32,
-	popu53 = popu53,
+	writeu8 = writeu8,
+	writeu16 = writeu16,
+	writeu24 = writeu24,
+	writeu32 = writeu32,
+	writeu53 = writeu53,
+	readu8 = readu8,
+	readu16 = readu16,
+	readu24 = readu24,
+	readu32 = readu32,
+	readu53 = readu53,
 
-	pushi8 = pushi8,
-	pushi16 = pushi16,
-	pushi24 = pushi24,
-	pushi32 = pushi32,
-	pushi53 = pushi53,
-	popi8 = popi8,
-	popi16 = popi16,
-	popi24 = popi24,
-	popi32 = popi32,
-	popi53 = popi53,
+	writei8 = writei8,
+	writei16 = writei16,
+	writei24 = writei24,
+	writei32 = writei32,
+	writei53 = writei53,
+	readi8 = readi8,
+	readi16 = readi16,
+	readi24 = readi24,
+	readi32 = readi32,
+	readi53 = readi53,
 
-	pushf16 = pushf16,
-	pushf32 = pushf32,
-	pushf64 = pushf64,
-	popf16 = popf16,
-	popf32 = popf32,
-	popf64 = popf64,
+	writef16 = writef16,
+	writef32 = writef32,
+	writef64 = writef64,
+	readf16 = readf16,
+	readf32 = readf32,
+	readf64 = readf64,
 
-	pushvlq = pushvlq,
-	popvlq = popvlq,
+	writevlq = writevlq,
+	readvlq = readvlq,
 
-	pushbuffer = pushbuffer,
-	popbuffer = popbuffer,
+	writebuffer = writebuffer,
+	readbuffer = readbuffer,
 
-	pushbool = pushbool,
-	popbool = popbool,
+	writebool = writebool,
+	readbool = readbool,
 
-	pushstring = pushstring,
-	popstring = popstring,
+	writestring = writestring,
+	readstring = readstring,
 
-	pushcolor3 = pushcolor3,
-	popcolor3 = popcolor3,
+	writecolor3 = writecolor3,
+	readcolor3 = readcolor3,
 
-	pushopt = pushopt,
-	popopt = popopt,
+	writeopt = writeopt,
+	readopt = readopt,
 	mark_opt = mark_opt,
 
 	u8 = u8_descriptor,
