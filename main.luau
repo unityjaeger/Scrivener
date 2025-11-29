@@ -16,18 +16,18 @@ export type ReadCursor = {
 	buff: buffer
 }
 
-export type Descriptor<T> = {
+export type Codec<T> = {
 	write: (cursor: WriteCursor, value: T) -> (),
 	read: (cursor: ReadCursor) -> T,
 	optional: boolean?
 }
 
-export type TupleDescriptor<T...> = {
+export type TupleCodec<T...> = {
 	write: (cursor: WriteCursor, T...) -> (),
 	read: (cursor: ReadCursor) -> T...
 }
 
-type StructField = Descriptor<any> & {
+type StructField = Codec<any> & {
 	name: string
 }
 
@@ -48,10 +48,10 @@ export type function SetTransformer(t: type)
 	for _, v in t:components() do
 		new:setproperty(v, types.optional(types.boolean))
 	end
-	return Descriptor(new :: any)
+	return Codec(new :: any)
 end
 
-type function GetDescriptorType(t: type)
+type function GetCodecType(t: type)
 	if t.tag ~= "table" then
 		return types.never
 	end
@@ -86,7 +86,7 @@ type function StructTransformer(t: type)
 
 	local tbl_props = t:properties()
 
-	local phantom_data = GetDescriptorType(t)
+	local phantom_data = GetCodecType(t)
 	if phantom_data ~= types.never then
 		return StructTransformer(phantom_data)
 	end
@@ -557,116 +557,116 @@ local function readopt<T>(cursor: ReadCursor, read_method: (cursor: ReadCursor) 
 	end
 end
 
-local function mark_opt<T>(inner: Descriptor<T>): Descriptor<T?>
+local function mark_opt<T>(inner: Codec<T>): Codec<T?>
 	local copy = table.clone(inner)
 	copy.optional = true
 	return copy
 end
 
-local u8_descriptor: Descriptor<number> = {
+local u8_codec: Codec<number> = {
 	write = writeu8,
 	read = readu8,
 }
 
-local u16_descriptor: Descriptor<number> = {
+local u16_codec: Codec<number> = {
 	write = writeu16,
 	read = readu16,
 }
 
-local u24_descriptor: Descriptor<number> = {
+local u24_codec: Codec<number> = {
 	write = writeu24,
 	read = readu24,
 }
 
-local u32_descriptor: Descriptor<number> = {
+local u32_codec: Codec<number> = {
 	write = writeu32,
 	read = readu32,
 }
 
-local u53_descriptor: Descriptor<number> = {
+local u53_codec: Codec<number> = {
 	write = writeu53,
 	read = readu53,
 }
 
-local i8_descriptor: Descriptor<number> = {
+local i8_codec: Codec<number> = {
 	write = writei8,
 	read = readi8,
 }
 
-local i16_descriptor: Descriptor<number> = {
+local i16_codec: Codec<number> = {
 	write = writei16,
 	read = readi16,
 }
 
-local i24_descriptor: Descriptor<number> = {
+local i24_codec: Codec<number> = {
 	write = writei24,
 	read = readi24,
 }
 
-local i32_descriptor: Descriptor<number> = {
+local i32_codec: Codec<number> = {
 	write = writei32,
 	read = readi32,
 }
 
-local i53_descriptor: Descriptor<number> = {
+local i53_codec: Codec<number> = {
 	write = writei53,
 	read = readi53,
 }
 
-local f16_descriptor: Descriptor<number> = {
+local f16_codec: Codec<number> = {
 	write = writef16,
 	read = readf16,
 }
 
-local f32_descriptor: Descriptor<number> = {
+local f32_codec: Codec<number> = {
 	write = writef32,
 	read = readf32,
 }
 
-local f64_descriptor: Descriptor<number> = {
+local f64_codec: Codec<number> = {
 	write = writef64,
 	read = readf64,
 }
 
-local vlq_descriptor: Descriptor<number> = {
+local vlq_codec: Codec<number> = {
 	write = writevlq,
 	read = readvlq,
 }
 
-local svlq_descriptor: Descriptor<number> = {
+local svlq_codec: Codec<number> = {
 	write = writesvlq,
 	read = readsvlq
 }
 
-local buffer_descriptor: Descriptor<buffer> = {
+local buffer_codec: Codec<buffer> = {
 	write = writebuffer,
 	read = readbuffer
 }
 
-local string_descriptor: Descriptor<string> = {
+local string_codec: Codec<string> = {
 	write = writestring,
 	read = readstring,
 }
 
-local bool_descriptor: TupleDescriptor<...boolean> = {
+local bool_codec: TupleCodec<...boolean> = {
 	write = writebool,
 	read = readbool
 }
 
-local bool_simple_descriptor: Descriptor<boolean> = {
+local bool_simple_codec: Codec<boolean> = {
 	write = writebool_simple,
 	read = readboool_simple
 }
 
-local color3_descriptor: Descriptor<Color3> = {
+local color3_codec: Codec<Color3> = {
 	write = writecolor3,
 	read = readcolor3
 }
 
-local literal_descriptor_cache = {}
-local function literal_descriptor<T>(literals: {T}): Descriptor<T>
-	if literal_descriptor_cache[literals] then
-		return literal_descriptor_cache[literals]
+local literal_codec_cache = {}
+local function literal_codec<T>(literals: {T}): Codec<T>
+	if literal_codec_cache[literals] then
+		return literal_codec_cache[literals]
 	end
 
 	if #literals > 255 then
@@ -675,7 +675,7 @@ local function literal_descriptor<T>(literals: {T}): Descriptor<T>
 
 	local inverse_literals = inverse_table(literals)
 
-	local descriptor: Descriptor<T> = {
+	local codec: Codec<T> = {
 		write = function(cursor, value: T)
 			local index = inverse_literals[value]
 			writeu8(cursor, index - 1)
@@ -686,20 +686,20 @@ local function literal_descriptor<T>(literals: {T}): Descriptor<T>
 		end,
 	}
 
-	literal_descriptor_cache[literals] = descriptor
+	literal_codec_cache[literals] = codec
 
-	return descriptor
+	return codec
 end
 
-local vector_descriptor_cache = {}
-local function vector3_descriptor(number_descriptor: Descriptor<number>): Descriptor<Vector3>
-	if vector_descriptor_cache[number_descriptor] then
-		return vector_descriptor_cache[number_descriptor]
+local vector_codec_cache = {}
+local function vector3_codec(number_codec: Codec<number>): Codec<Vector3>
+	if vector_codec_cache[number_codec] then
+		return vector_codec_cache[number_codec]
 	end
 
-	local write, read = number_descriptor.write, number_descriptor.read
+	local write, read = number_codec.write, number_codec.read
 
-	local descriptor: Descriptor<Vector3> = {
+	local codec: Codec<Vector3> = {
 		write = function(cursor, value: Vector3)
 			write(cursor, value.X)
 			write(cursor, value.Y)
@@ -714,21 +714,21 @@ local function vector3_descriptor(number_descriptor: Descriptor<number>): Descri
 		end,
 	}
 
-	vector_descriptor_cache[number_descriptor] = descriptor
+	vector_codec_cache[number_codec] = codec
 
-	return descriptor
+	return codec
 end
 
-local opt_descriptor_cache = {}
-local function opt_descriptor<T>(inner: Descriptor<T>): Descriptor<T?>
-	if opt_descriptor_cache[inner] then
-		return opt_descriptor_cache[inner]
+local opt_codec_cache = {}
+local function opt_codec<T>(inner: Codec<T>): Codec<T?>
+	if opt_codec_cache[inner] then
+		return opt_codec_cache[inner]
 	end
 
 	local write, read = inner.write, inner.read
 
 	--inline for slightly better speed yknow
-	local descriptor: Descriptor<T?> = {
+	local codec: Codec<T?> = {
 		write = function(cursor, value: T?)
 			if value == nil then
 				writeu8(cursor, 0)
@@ -747,12 +747,12 @@ local function opt_descriptor<T>(inner: Descriptor<T>): Descriptor<T?>
 		end,
 	}
 
-	opt_descriptor_cache[inner] = descriptor
+	opt_codec_cache[inner] = codec
 
-	return descriptor
+	return codec
 end
 
-local function simple_struct<T>(fields: {StructField}): Descriptor<T>
+local function simple_struct<T>(fields: {StructField}): Codec<T>
 	return {
 		write = function(cursor, value)
 			for _, inner in fields do
@@ -769,8 +769,8 @@ local function simple_struct<T>(fields: {StructField}): Descriptor<T>
 	}
 end
 
-local function optional_struct<T>(fields: {StructField}, opt_fields: {OptStructField}, byte_descriptor: Descriptor<number>): Descriptor<T>
-	local write_byte, read_byte = byte_descriptor.write, byte_descriptor.read
+local function optional_struct<T>(fields: {StructField}, opt_fields: {OptStructField}, byte_codec: Codec<number>): Codec<T>
+	local write_byte, read_byte = byte_codec.write, byte_codec.read
 
 	return {
 		write = function(cursor, value)
@@ -814,17 +814,17 @@ local function optional_struct<T>(fields: {StructField}, opt_fields: {OptStructF
 	}
 end
 
-local struct_descriptor_cache = {}
-local function struct_descriptor_hidden<T>(struct: T): Descriptor<T>
-	if struct_descriptor_cache[struct] then
-		return struct_descriptor_cache[struct]
+local struct_codec_cache = {}
+local function struct_codec_hidden<T>(struct: T): Codec<T>
+	if struct_codec_cache[struct] then
+		return struct_codec_cache[struct]
 	end
 
 	local fields: {StructField} = {}
 	local opt_fields: {OptStructField} = {}
 	local opt_count = 0	
 
-	for name, inner in struct :: {[string]: Descriptor<any>} do
+	for name, inner in struct :: {[string]: Codec<any>} do
 		if inner.optional then
 			table.insert(opt_fields, {
 				name = name,
@@ -850,42 +850,42 @@ local function struct_descriptor_hidden<T>(struct: T): Descriptor<T>
 	table.sort(opt_fields, function(a: OptStructField, b: OptStructField) return a.name < b.name end)
 	table.sort(fields, function(a: StructField, b: StructField) return a.name < b.name end)
 
-	local byte_descriptor: Descriptor<number>
+	local byte_codec: Codec<number>
 	if opt_count <= 8 then
-		byte_descriptor = u8_descriptor
+		byte_codec = u8_codec
 	elseif opt_count <= 16 then
-		byte_descriptor = u16_descriptor
+		byte_codec = u16_codec
 	elseif opt_count <= 24 then
-		byte_descriptor = u24_descriptor
+		byte_codec = u24_codec
 	else
-		byte_descriptor = u32_descriptor
+		byte_codec = u32_codec
 	end
 
-	local descriptor: Descriptor<T>
+	local codec: Codec<T>
 	if opt_count == 0 then
-		descriptor = simple_struct(fields)
+		codec = simple_struct(fields)
 	else
-		descriptor = optional_struct(fields, opt_fields, byte_descriptor)
+		codec = optional_struct(fields, opt_fields, byte_codec)
 	end
 
-	struct_descriptor_cache[struct] = descriptor
+	struct_codec_cache[struct] = codec
 
-	return descriptor
+	return codec
 end
 
-local function struct_descriptor<T>(struct: T): Descriptor<StructTransformer<T>>
-	return struct_descriptor_hidden(struct)
+local function struct_codec<T>(struct: T): Codec<StructTransformer<T>>
+	return struct_codec_hidden(struct)
 end
 
-local array_descriptor_cache = {}
-local function array_descriptor<T>(element_descriptor: Descriptor<T>): Descriptor<{T}>
-	if array_descriptor_cache[element_descriptor] then
-		return array_descriptor_cache[element_descriptor]
+local array_codec_cache = {}
+local function array_codec<T>(element_codec: Codec<T>): Codec<{T}>
+	if array_codec_cache[element_codec] then
+		return array_codec_cache[element_codec]
 	end
 
-	local write, read = element_descriptor.write, element_descriptor.read
+	local write, read = element_codec.write, element_codec.read
 
-	local descriptor: Descriptor<{T}> = {
+	local codec: Codec<{T}> = {
 		write = function(cursor, value: {T})
 			writevlq(cursor, #value)
 			for _, entry in value do
@@ -902,21 +902,21 @@ local function array_descriptor<T>(element_descriptor: Descriptor<T>): Descripto
 		end,
 	}
 
-	array_descriptor_cache[element_descriptor] = descriptor
+	array_codec_cache[element_codec] = codec
 
-	return descriptor
+	return codec
 end
 
-local map_descriptor_cache = {}
-local function map_descriptor<K, V>(key_descriptor: Descriptor<K>, value_descriptor: Descriptor<V>): Descriptor<{[K]: V}>
-	if map_descriptor_cache[key_descriptor] and map_descriptor_cache[key_descriptor][value_descriptor] then
-		return map_descriptor_cache[key_descriptor][value_descriptor]
+local map_codec_cache = {}
+local function map_codec<K, V>(key_codec: Codec<K>, value_codec: Codec<V>): Codec<{[K]: V}>
+	if map_codec_cache[key_codec] and map_codec_cache[key_codec][value_codec] then
+		return map_codec_cache[key_codec][value_codec]
 	end
 
-	local key_write, key_read = key_descriptor.write, key_descriptor.read
-	local value_write, value_read = value_descriptor.write, value_descriptor.read
+	local key_write, key_read = key_codec.write, key_codec.read
+	local value_write, value_read = value_codec.write, value_codec.read
 
-	local descriptor: Descriptor<{[K]: V}> = {
+	local codec: Codec<{[K]: V}> = {
 		write = function(cursor, value: {[K]: V})
 			local len = 0
 			for key, entry in value do
@@ -942,9 +942,9 @@ local function map_descriptor<K, V>(key_descriptor: Descriptor<K>, value_descrip
 		end,
 	}
 
-	map_descriptor_cache[key_descriptor] = {[value_descriptor] = descriptor}
+	map_codec_cache[key_codec] = {[value_codec] = codec}
 
-	return descriptor
+	return codec
 end
 
 local id_to_rotation = {
@@ -985,18 +985,18 @@ do
 	end
 end
 
-local cframe_descriptor_cache = {}
-local function cframe_descriptor(position_descriptor: Descriptor<number>, position_scale: number?): Descriptor<CFrame>
-	if cframe_descriptor_cache[position_descriptor] then
-		warn("cached cframe descriptors may not have the same position_scale if a different position_scale was defined")
-		return cframe_descriptor_cache[position_descriptor]
+local cframe_codec_cache = {}
+local function cframe_codec(position_codec: Codec<number>, position_scale: number?): Codec<CFrame>
+	if cframe_codec_cache[position_codec] then
+		warn("cached cframe codecs may not have the same position_scale if a different position_scale was defined")
+		return cframe_codec_cache[position_codec]
 	end
 
-	local position_write, position_read = position_descriptor.write, position_descriptor.read
+	local position_write, position_read = position_codec.write, position_codec.read
 
 	local scale = position_scale or 1
 
-	local descriptor: Descriptor<CFrame> = {
+	local codec: Codec<CFrame> = {
 		write = function(cursor, value: CFrame)
 			local rot_x, rot_y, rot_z = value:ToOrientation()
 			local id = rotation_to_id[rot_x] and rotation_to_id[rot_x][rot_y] and rotation_to_id[rot_x][rot_y][rot_z]
@@ -1038,38 +1038,38 @@ local function cframe_descriptor(position_descriptor: Descriptor<number>, positi
 		end,
 	}
 
-	cframe_descriptor_cache[position_descriptor] = descriptor
+	cframe_codec_cache[position_codec] = codec
 
-	return descriptor
+	return codec
 end
 
-local variant_descriptor_cache = {}
-local function variant_descriptor_hidden<T>(variants: T): Descriptor<T>
-	if variant_descriptor_cache then
-		return variant_descriptor_cache[variants]
+local variant_codec_cache = {}
+local function variant_codec_hidden<T>(variants: T): Codec<T>
+	if variant_codec_cache then
+		return variant_codec_cache[variants]
 	end
 
 	local literals: {string} = {}
-	for kind in variants :: {[string]: Descriptor<any>} do
+	for kind in variants :: {[string]: Codec<any>} do
 		table.insert(literals, kind)
 	end
 
-	local kind_descriptor = literal_descriptor(literals)
-	local kind_write, kind_read = kind_descriptor.write, kind_descriptor.read
+	local kind_codec = literal_codec(literals)
+	local kind_write, kind_read = kind_codec.write, kind_codec.read
 
-	local descriptor: Descriptor<{ kind: string, value: any }> = {
+	local codec: Codec<{ kind: string, value: any }> = {
 		write = function(cursor, value)
 			local kind = value.kind
 			local payload = value.value
 
-			local inner = (variants :: {[string]: Descriptor<any>})[kind]
+			local inner = (variants :: {[string]: Codec<any>})[kind]
 			kind_write(cursor, kind)
 			inner.write(cursor, payload)
 		end,
 
 		read = function(cursor)
 			local kind = kind_read(cursor)
-			local inner = (variants :: {[string]: Descriptor<any>})[kind]
+			local inner = (variants :: {[string]: Codec<any>})[kind]
 			local payload = inner.read(cursor)
 
 			return {
@@ -1079,22 +1079,22 @@ local function variant_descriptor_hidden<T>(variants: T): Descriptor<T>
 		end
 	}
 
-	variant_descriptor_cache[variants] = descriptor
+	variant_codec_cache[variants] = codec
 
-	return descriptor
+	return codec
 end
 
-local function variant_descriptor<T>(variants: T): Descriptor<VariantTransformer<T>>
-	return variant_descriptor_hidden(variants)
+local function variant_codec<T>(variants: T): Codec<VariantTransformer<T>>
+	return variant_codec_hidden(variants)
 end
 
-local bitarray_descriptor_cache = {}
-local function bitarray_descriptor(byte_count: number): Descriptor<{boolean}>
-	if bitarray_descriptor_cache[byte_count] then
-		return bitarray_descriptor_cache[byte_count]
+local bitarray_codec_cache = {}
+local function bitarray_codec(byte_count: number): Codec<{boolean}>
+	if bitarray_codec_cache[byte_count] then
+		return bitarray_codec_cache[byte_count]
 	end
 
-	local descriptor: Descriptor<{boolean}> = {
+	local codec: Codec<{boolean}> = {
 		write = function(cursor, value: {boolean})
 			for i = 0, byte_count - 1 do
 				local j = i * 8
@@ -1111,15 +1111,15 @@ local function bitarray_descriptor(byte_count: number): Descriptor<{boolean}>
 		end,
 	}
 
-	bitarray_descriptor_cache[byte_count] = descriptor
+	bitarray_codec_cache[byte_count] = codec
 
-	return descriptor
+	return codec
 end
 
-local set_descriptor_cache = {}
-local function set_descriptor<T>(set: {string}): Descriptor<EitherOr<T, {[string]: boolean?}>>
-	if set_descriptor_cache[set] then
-		return set_descriptor_cache[set]
+local set_codec_cache = {}
+local function set_codec<T>(set: {string}): Codec<EitherOr<T, {[string]: boolean?}>>
+	if set_codec_cache[set] then
+		return set_codec_cache[set]
 	end
 
 	local name_to_index = {}
@@ -1128,10 +1128,10 @@ local function set_descriptor<T>(set: {string}): Descriptor<EitherOr<T, {[string
 	end
 
 	local len = #set
-	local bitarray = bitarray_descriptor(math.ceil(len / 8))
+	local bitarray = bitarray_codec(math.ceil(len / 8))
 	local bitarray_write, bitarray_read = bitarray.write, bitarray.read
 
-	local descriptor: Descriptor<T> = {
+	local codec: Codec<T> = {
 		write = function(cursor, value: {[string]: boolean?})
 			local bools = table.create(len, false)
 
@@ -1157,9 +1157,9 @@ local function set_descriptor<T>(set: {string}): Descriptor<EitherOr<T, {[string
 		end,
 	}
 
-	set_descriptor_cache[set] = descriptor
+	set_codec_cache[set] = codec
 
-	return descriptor
+	return codec
 end
 
 local function get_reserved_buffer(): buffer
@@ -1219,44 +1219,44 @@ return {
 	readopt = readopt,
 	mark_opt = mark_opt,
 
-	u8 = u8_descriptor,
-	u16 = u16_descriptor,
-	u24 = u24_descriptor,
-	u32 = u32_descriptor,
-	u53 = u53_descriptor,
+	u8 = u8_codec,
+	u16 = u16_codec,
+	u24 = u24_codec,
+	u32 = u32_codec,
+	u53 = u53_codec,
 
-	i8 = i8_descriptor,
-	i16 = i16_descriptor,
-	i24 = i24_descriptor,
-	i32 = i32_descriptor,
-	i53 = i53_descriptor,
+	i8 = i8_codec,
+	i16 = i16_codec,
+	i24 = i24_codec,
+	i32 = i32_codec,
+	i53 = i53_codec,
 
-	f16 = f16_descriptor,
-	f32 = f32_descriptor,
-	f64 = f64_descriptor,
+	f16 = f16_codec,
+	f32 = f32_codec,
+	f64 = f64_codec,
 
-	vlq = vlq_descriptor,
-	svlq = svlq_descriptor,
+	vlq = vlq_codec,
+	svlq = svlq_codec,
 
-	buffer = buffer_descriptor,
+	buffer = buffer_codec,
 
-	bool = bool_descriptor,
-	bool_simple = bool_simple_descriptor,
+	bool = bool_codec,
+	bool_simple = bool_simple_codec,
 
-	string = string_descriptor,
+	string = string_codec,
 
-	color3 = color3_descriptor,
+	color3 = color3_codec,
 
-	literal = literal_descriptor,
-	vector3 = vector3_descriptor,
-	opt = opt_descriptor,
-	struct = struct_descriptor,
-	array = array_descriptor,
-	map = map_descriptor,
-	cframe = cframe_descriptor,
-	variant = variant_descriptor,
-	bitarray = bitarray_descriptor,
-	set = set_descriptor,
+	literal = literal_codec,
+	vector3 = vector3_codec,
+	opt = opt_codec,
+	struct = struct_codec,
+	array = array_codec,
+	map = map_codec,
+	cframe = cframe_codec,
+	variant = variant_codec,
+	bitarray = bitarray_codec,
+	set = set_codec,
 
 	get_reserved_buffer = get_reserved_buffer
 }
