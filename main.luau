@@ -74,16 +74,6 @@ type function StructTransformer(t: type)
 		return t
 	end
 
-	local mt = t:metatable()
-	if mt then
-		local index_singleton = types.singleton("__index")
-		for key, v in mt:properties() do
-			if key == index_singleton then
-				t = v.read or v.write :: any
-			end
-		end
-	end
-
 	local tbl_props = t:properties()
 
 	local phantom_data = GetCodecType(t)
@@ -209,7 +199,7 @@ local function writef16_helper(buff: buffer, offset: number, value: number): ()
 		sign,
 		bit32.lshift(exponent, 10),
 		fraction * 1024
-	))
+		))
 end
 
 local function readf16_helper(buff: buffer, offset: number): number
@@ -834,7 +824,7 @@ local function struct_codec_hidden<T>(struct: T): Codec<T>
 			} :: OptStructField)
 
 			opt_count += 1
-			
+
 			if opt_count > 32 then
 				error(string.format("structs can not have more than 32 optional fields, got %d", opt_count))
 			end
@@ -1045,7 +1035,7 @@ end
 
 local variant_codec_cache = {}
 local function variant_codec_hidden<T>(variants: T): Codec<T>
-	if variant_codec_cache then
+	if variant_codec_cache[variants] then
 		return variant_codec_cache[variants]
 	end
 
