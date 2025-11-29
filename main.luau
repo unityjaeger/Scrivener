@@ -692,21 +692,21 @@ local function literal_descriptor<T>(literals: {T}): Descriptor<T>
 end
 
 local vector_descriptor_cache = {}
-local function vector_descriptor<number>(number_descriptor: Descriptor<number>): Descriptor<vector>
+local function vector3_descriptor(number_descriptor: Descriptor<number>): Descriptor<Vector3>
 	if vector_descriptor_cache[number_descriptor] then
 		return vector_descriptor_cache[number_descriptor]
 	end
 
 	local write, read = number_descriptor.write, number_descriptor.read
 
-	local descriptor: Descriptor<vector> = {
-		write = function(cursor, value: vector)
-			write(cursor, value.x)
-			write(cursor, value.y)
-			write(cursor, value.z)
+	local descriptor: Descriptor<Vector3> = {
+		write = function(cursor, value: Vector3)
+			write(cursor, value.X)
+			write(cursor, value.Y)
+			write(cursor, value.Z)
 		end,
 		read = function(cursor)
-			return vector.create(
+			return Vector3.new(
 				read(cursor),
 				read(cursor),
 				read(cursor)
@@ -1162,10 +1162,6 @@ local function set_descriptor<T>(set: {string}): Descriptor<EitherOr<T, {[string
 	return descriptor
 end
 
-local function T<T>(value: Descriptor<T>): T
-	return value
-end
-
 local function get_reserved_buffer(): buffer
 	return RESERVED_BUFFER
 end
@@ -1242,17 +1238,17 @@ return {
 	vlq = vlq_descriptor,
 	svlq = svlq_descriptor,
 
-	buffer_descriptor = buffer_descriptor,
+	buffer = buffer_descriptor,
 
 	bool = bool_descriptor,
 	bool_simple = bool_simple_descriptor,
 
 	string = string_descriptor,
 
-	color3_descriptor = color3_descriptor,
+	color3 = color3_descriptor,
 
 	literal = literal_descriptor,
-	vector = vector_descriptor,
+	vector3 = vector3_descriptor,
 	opt = opt_descriptor,
 	struct = struct_descriptor,
 	array = array_descriptor,
@@ -1262,6 +1258,5 @@ return {
 	bitarray = bitarray_descriptor,
 	set = set_descriptor,
 
-	T = T,
 	get_reserved_buffer = get_reserved_buffer
 }
