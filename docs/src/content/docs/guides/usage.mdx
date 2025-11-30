@@ -615,7 +615,7 @@ function variant(variants: {[string]: Codec<any>}): Codec<{kind: string, value: 
 
 A 'variant' is a tagged union: a fixed set of possible cases, each with its own payload.
 
-Example:
+### Example
 ```luau
 local choice = scrivener.variant({
     a = u8,
