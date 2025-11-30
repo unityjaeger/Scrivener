@@ -1,0 +1,19 @@
+name = "unityjaeger/scrivener"
+version = "0.0.1"
+authors = ["unityjaeger"]
+license = "MIT"
+repository = "https://github.com/unityjaeger/Scrivener"
+
+includes = [
+    "pesde.toml",
+    "main.luau",
+    "README.md"
+]
+
+[indices]
+default = "https://github.com/pesde-pkg/index"
+
+[target]
+environment = "roblox"
+lib = "main.luau"
+build_files = ["main.luau"]
