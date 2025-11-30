@@ -863,7 +863,7 @@ local function struct_codec_hidden<T>(struct: T): Codec<T>
 	return codec
 end
 
-local function struct_codec<T>(struct: T): Codec<StructTransformer<T>>
+local function struct_codec<T>(struct: T & {[string]: Codec<any>}): Codec<StructTransformer<T>>
 	return struct_codec_hidden(struct)
 end
 
@@ -1074,7 +1074,7 @@ local function variant_codec_hidden<T>(variants: T): Codec<T>
 	return codec
 end
 
-local function variant_codec<T>(variants: T): Codec<VariantTransformer<T>>
+local function variant_codec<T>(variants: T & {[string]: Codec<any>}): Codec<VariantTransformer<T>>
 	return variant_codec_hidden(variants)
 end
 
