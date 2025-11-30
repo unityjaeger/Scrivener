@@ -1,6 +1,6 @@
 [package]
 name = "unityjaeger/scrivener"
-version = "0.0.1"
+version = "0.0.1-wally-fix"
 registry = "https://github.com/UpliftGames/wally-index"
 realm = "shared"
 license = "MIT"
@@ -8,5 +8,6 @@ include = [
 	"default.project.json",
 	"wally.toml",
 	"README.md",
+    "main.luau"
 ]
 exclude = ["**"]
