@@ -47,6 +47,10 @@ type function SetTransformer(t: type)
 	local union
 	
 	for _, v in t:components() do
+		if v:value() == "" then
+			continue
+		end
+		
 		local new = types.newtable()
 		new:setproperty(v, types.boolean)
 		
