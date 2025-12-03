@@ -19,7 +19,8 @@ export type ReadCursor = {
 export type Codec<T> = {
 	write: (cursor: WriteCursor, value: T) -> (),
 	read: (cursor: ReadCursor) -> T,
-	optional: boolean?
+	optional: boolean?,
+	boolean: boolean?
 }
 
 export type TupleCodec<T...> = {
@@ -31,7 +32,7 @@ type StructField = Codec<any> & {
 	name: string
 }
 
-type OptStructField = StructField & {
+type SpecialStructField = StructField & {
 	bitmask: number
 }
 
@@ -45,7 +46,7 @@ end
 
 type function SetTransformer(t: type)
 	local union
-	
+
 	for _, v in t:components() do
 		if v:value() == "" then
 			continue
@@ -53,32 +54,32 @@ type function SetTransformer(t: type)
 		
 		local new = types.newtable()
 		new:setproperty(v, types.boolean)
-		
+
 		if not union then
 			union = new
 		else
 			union = types.unionof(union, new)
 		end
 	end
-	
+
 	return union
 end
 
 type function StripEmptyLiterals(t: type)
 	local union
-	
+
 	for _, v in t:components() do
 		if v:value() == "" then
 			continue
 		end
-		
+
 		if not union then
 			union = v
 		else
 			union = types.unionof(union, v)
 		end
 	end
-	
+
 	return union
 end
 
@@ -265,25 +266,25 @@ end
 
 local function readu40(cursor: ReadCursor): number
 	local buff, pos = cursor.buff, cursor.pos
-	
+
 	local value = 2^8 * buffer.readu32(buff, pos)
 	pos += 4
-	
+
 	value += buffer.readu8(buff, pos)
 	cursor.pos = pos + 1
-	
+
 	return value
 end
 
 local function readu48(cursor: ReadCursor): number
 	local buff, pos = cursor.buff, cursor.pos
-	
+
 	local value = 2^16 * buffer.readu32(buff, pos)
 	pos += 4
-	
+
 	value += buffer.readu16(buff, pos)
 	cursor.pos = pos + 2
-	
+
 	return value
 end
 
@@ -335,7 +336,7 @@ local function writei40(cursor: WriteCursor, value: number)
 	if value < 0 then
 		value += 2^40
 	end
-	
+
 	local pos = cursor.pos
 
 	buffer.writeu32(RESERVED_BUFFER, pos, value / 2^8)
@@ -349,7 +350,7 @@ local function writei48(cursor: WriteCursor, value: number)
 	if value < 0 then
 		value += 2^48
 	end
-	
+
 	local pos = cursor.pos
 
 	buffer.writeu32(RESERVED_BUFFER, pos, value / 2^16)
@@ -418,7 +419,7 @@ local function readi40(cursor: ReadCursor): number
 
 	value += buffer.readu8(buff, pos)
 	cursor.pos = pos + 1
-	
+
 	if value >= 2^39 then
 		return value - 2^40
 	end
@@ -434,7 +435,7 @@ local function readi48(cursor: ReadCursor): number
 
 	value += buffer.readu16(buff, pos)
 	cursor.pos = pos + 2
-	
+
 	if value >= 2^47 then
 		return value - 2^48
 	end
@@ -856,7 +857,8 @@ local bool_codec: TupleCodec<...boolean> = {
 
 local bool_simple_codec: Codec<boolean> = {
 	write = writebool_simple,
-	read = readboool_simple
+	read = readboool_simple,
+	boolean = true
 }
 
 local color3_codec: Codec<Color3> = {
@@ -966,6 +968,20 @@ local function opt_codec<T>(inner: Codec<T>): Codec<T?>
 	return codec
 end
 
+local function get_unsigned_codec_for_size(byte_count: number): Codec<number>?
+	if byte_count <= 8 then
+		return u8_codec
+	elseif byte_count <= 16 then
+		return u16_codec
+	elseif byte_count <= 24 then
+		return u24_codec
+	elseif byte_count <= 32 then
+		return u32_codec
+	end
+	
+	return nil
+end
+
 local function simple_struct<T>(fields: {StructField}): Codec<T>
 	return {
 		write = function(cursor, value)
@@ -983,8 +999,8 @@ local function simple_struct<T>(fields: {StructField}): Codec<T>
 	}
 end
 
-local function optional_struct<T>(fields: {StructField}, opt_fields: {OptStructField}, byte_codec: Codec<number>): Codec<T>
-	local write_byte, read_byte = byte_codec.write, byte_codec.read
+local function optional_struct<T>(fields: {StructField}, opt_fields: {SpecialStructField}, opt_codec: Codec<number>): Codec<T>
+	local write_opt, read_opt = opt_codec.write, opt_codec.read
 
 	return {
 		write = function(cursor, value)
@@ -996,7 +1012,7 @@ local function optional_struct<T>(fields: {StructField}, opt_fields: {OptStructF
 				end
 			end
 
-			write_byte(cursor, byte)
+			write_opt(cursor, byte)
 
 			for _, inner in opt_fields do
 				local field_value = value[inner.name]
@@ -1011,12 +1027,124 @@ local function optional_struct<T>(fields: {StructField}, opt_fields: {OptStructF
 		end,
 		read = function(cursor)
 			local result = {}
-			local byte = read_byte(cursor)
+			local byte = read_opt(cursor)
 
 			for _, inner in opt_fields do
 				if bit32.band(byte, inner.bitmask) ~= 0 then
 					result[inner.name] = inner.read(cursor)
 				end
+			end
+
+			for _, inner in fields do
+				result[inner.name] = inner.read(cursor)
+			end
+
+			return result
+		end,
+	}
+end
+
+local function bool_struct<T>(fields: {StructField}, bool_fields: {SpecialStructField}, bool_codec: Codec<number>): Codec<T>
+	local write_bool, read_bool = bool_codec.write, bool_codec.read
+	
+	return {
+		write = function(cursor, value)
+			local byte = 0
+			for _, inner in bool_fields do
+				if value[inner.name] == true then
+					byte = bit32.bor(byte, inner.bitmask)
+				end
+			end
+			
+			write_bool(cursor, byte)
+			
+			for _, inner in fields do
+				inner.write(cursor, value[inner.name])
+			end
+		end,
+		read = function(cursor)
+			local result = {}
+			local byte = read_bool(cursor)
+
+			for _, inner in bool_fields do
+				result[inner.name] = bit32.band(byte, inner.bitmask) ~= 0 and true or false
+			end
+
+			for _, inner in fields do
+				result[inner.name] = inner.read(cursor)
+			end
+
+			return result
+		end,
+	}
+end
+
+function optional_bool_struct<T>(fields: {StructField}, opt_fields: {SpecialStructField}, bool_fields: {SpecialStructField}, opt_bool_fields: {SpecialStructField}, opt_codec: Codec<number>, bool_codec: Codec<number>): Codec<T>
+	local write_opt, read_opt = opt_codec.write, opt_codec.read
+	local write_bool, read_bool = bool_codec.write, bool_codec.read
+	
+	return {
+		write = function(cursor, value)
+			local opt_byte = 0
+			local bool_byte = 0
+			
+			for _, inner in opt_fields do
+				local field_value = value[inner.name]
+				if field_value ~= nil then
+					opt_byte = bit32.bor(opt_byte, inner.bitmask)
+				end
+			end
+			
+			for _, inner in bool_fields do
+				if value[inner.name] == true then
+					bool_byte = bit32.bor(bool_byte, inner.bitmask)
+				end
+			end
+			
+			for _, inner in opt_bool_fields do
+				local state = value[inner.name]
+				if state ~= nil then
+					opt_byte = bit32.bor(opt_byte, inner.bitmask)
+					
+					if state == true then
+						bool_byte = bit32.bor(bool_byte, inner.bitmask)
+					end
+				end
+			end
+
+			write_opt(cursor, opt_byte)
+			write_bool(cursor, bool_byte)
+
+			for _, inner in opt_fields do
+				local field_value = value[inner.name]
+				if field_value ~= nil then
+					inner.write(cursor, field_value)
+				end
+			end
+
+			for _, inner in fields do
+				inner.write(cursor, value[inner.name])
+			end
+		end,
+		read = function(cursor)
+			local result = {}
+			local opt_byte = read_opt(cursor)
+			local bool_byte = read_bool(cursor)
+
+			for _, inner in opt_fields do
+				if bit32.band(opt_byte, inner.bitmask) ~= 0 then
+					result[inner.name] = inner.read(cursor)
+				end
+			end
+			
+			for _, inner in opt_bool_fields do
+				if bit32.band(opt_byte, inner.bitmask) ~= 0 then
+					result[inner.name] = bit32.band(bool_byte, inner.bitmask) ~= 0
+				end
+			end
+			
+			for _, inner in bool_fields do
+				result[inner.name] = bit32.band(bool_byte, inner.bitmask) ~= 0
 			end
 
 			for _, inner in fields do
@@ -1035,51 +1163,77 @@ local function struct_codec_hidden<T>(struct: T): Codec<T>
 	end
 
 	local fields: {StructField} = {}
-	local opt_fields: {OptStructField} = {}
-	local opt_count = 0	
+	local opt_fields: {SpecialStructField} = {}
+	local bool_fields: {SpecialStructField} = {}
+	local opt_bool_fields: {SpecialStructField} = {}
+	
+	local opt_count = 0
+	local bool_count = 0
 
 	for name, inner in struct :: {[string]: Codec<any>} do
-		if inner.optional then
-			table.insert(opt_fields, {
+		if inner.optional and inner.boolean then
+			table.insert(opt_bool_fields, {
 				name = name,
 				write = inner.write,
 				read = inner.read,
 				bitmask = bit32.lshift(1, opt_count)
-			} :: OptStructField)
-
+			} :: SpecialStructField)
+			
 			opt_count += 1
-
-			if opt_count > 32 then
-				error(string.format("structs can not have more than 32 optional fields, got %d", opt_count))
-			end
+			bool_count += 1
 		else
-			table.insert(fields, {
-				name = name,
-				write = inner.write,
-				read = inner.read
-			} :: StructField)
+			if inner.optional then
+				table.insert(opt_fields, {
+					name = name,
+					write = inner.write,
+					read = inner.read,
+					bitmask = bit32.lshift(1, opt_count)
+				} :: SpecialStructField)
+
+				opt_count += 1
+			elseif inner.boolean then
+				table.insert(bool_fields, {
+					name = name,
+					write = inner.write,
+					read = inner.read,
+					bitmask = bit32.lshift(1, bool_count)
+				} :: SpecialStructField)
+				
+				bool_count += 1
+			else
+				table.insert(fields, {
+					name = name,
+					write = inner.write,
+					read = inner.read
+				} :: StructField)
+			end
 		end
 	end
 
-	table.sort(opt_fields, function(a: OptStructField, b: OptStructField) return a.name < b.name end)
-	table.sort(fields, function(a: StructField, b: StructField) return a.name < b.name end)
+	table.sort(fields, function(a: StructField, b) return a.name < b.name end)
+	table.sort(opt_fields, function(a: SpecialStructField, b) return a.name < b.name end)
+	table.sort(bool_fields, function(a: StructField, b) return a.name < b.name end)
+	table.sort(opt_bool_fields, function(a: SpecialStructField, b) return a.name < b.name  end)
 
-	local byte_codec: Codec<number>
-	if opt_count <= 8 then
-		byte_codec = u8_codec
-	elseif opt_count <= 16 then
-		byte_codec = u16_codec
-	elseif opt_count <= 24 then
-		byte_codec = u24_codec
-	else
-		byte_codec = u32_codec
-	end
+	local bool_codec = get_unsigned_codec_for_size(bool_count)
+	assert(bool_codec, "cannot have more than 32 booleans in a struct")
+	
+	local opt_codec = get_unsigned_codec_for_size(opt_count)
+	assert(opt_codec, "cannot have more than 32 optional fields in a struct")
 
 	local codec: Codec<T>
-	if opt_count == 0 then
-		codec = simple_struct(fields)
+	
+	local has_bools, has_opts = bool_count > 0, opt_count > 0
+	if has_bools and has_opts then
+		codec = optional_bool_struct(fields, opt_fields, bool_fields, opt_bool_fields, opt_codec, bool_codec)
 	else
-		codec = optional_struct(fields, opt_fields, byte_codec)
+		if has_opts then
+			codec = optional_struct(fields, opt_fields, opt_codec)
+		elseif has_bools then
+			codec = bool_struct(fields, bool_fields, bool_codec)
+		else
+			codec = simple_struct(fields)
+		end
 	end
 
 	struct_codec_cache[struct] = codec
