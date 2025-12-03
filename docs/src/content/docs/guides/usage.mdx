@@ -29,6 +29,9 @@ Due to this approach, you can't write into 2 cursors at the same time. You need 
 1. use the 'global_offset' parameter when creating a WriteCursor, to write farther into the reserved buffer so the writes dont interfere with one another, or
 2. finish writing one cursor before starting to write the next
 ::: 
+:::caution
+The creation of a ReadCursor will error if the size of the buffer exceeds 1 000 000 (e.g. when exploiters send large buffers), handle this accordingly if the following code should still run.
+:::
 
 ---
 
@@ -129,6 +132,8 @@ Unsigned Integers are (mathematically) whole numbers.
 |u16|2|0|65 535|
 |u24|3|0|16 777 215|
 |u32|4|0|4 294 967 295|
+|u40|5|0|1 099 511 627 775|
+|u48|6|0|281 474 976 710 655|
 |u53|7|0|9 007 199 254 740 991|
 
 Example:
@@ -156,6 +161,8 @@ Signed Integers are (mathematically) integers.
 |i16|2|−32 768|32 767|
 |i24|3|−8 388 608|8 388 607|
 |i32|4|−2 147 483 648|2 147 483 647|
+|i40|5|-549 755 813 888|549 755 813 887|
+|i48|6|-140 737 488 355 328|140 737 488 355 327|
 |i53|7|−4 503 599 627 370 496|4 503 599 627 370 495|
 
 Example:
@@ -448,14 +455,6 @@ local reader = scrivener.read_cursor(result)
 print(enums.read(reader)) --> "Idle"
 ```
 
-:::tip
-If you want to only use string literals and would like better autocomplete, consider casting the returned codec like so:
-```luau
-local enums = literal({"Idle", "Running", "Jumping"}) :: scrivener.Codec<"Idle" | "Running" | "Jumping">
-```
-Unfortunately there is no way to support this in the library itself because string values in arrays dont produce singleton types.
-:::
-
 ---
 
 ## Arrays
@@ -534,14 +533,6 @@ print(permissions.read(reader)) --> {CanEdit = true}
 false flags get treated as nil during reading for faster read speeds.
 :::
 
-:::tip
-If you want better types for write/read instead of just ```{[string]: boolean?}``` you can cast the returned codec like so:
-```luau
-local permissions = scrivener.set({"CanEdit", "CanDelete", "IsAdmin"}) :: scrivener.SetTransformer<"CanEdit" | "CanDelete" | "IsAdmin">
---resulting write/read value type: {CanEdit: boolean?, CanDelete: boolean?, IsAdmin: boolean?}
-```
-:::
-
 ---
 
 ## Maps
@@ -597,6 +588,15 @@ local reader = scrivener.read_cursor(result)
 print(data.read(reader)) --> {name = "John", age = 20, some_array = {5.5, 0, -2}}
 ```
 
+:::note
+Booleans in structs will be automatically bitpacked (up to 32), meaning 8 booleans together take up 1 byte.
+:::
+
+:::caution
+If you want to use bools in structs, use bool_simple instead of bool, as bool returns a tuple which results in only the first bool being written/read in practice. Otherwise the other 7 bits are still calculated, wasting performance.
+Additionally, only bool_simple will be considered for bitpacking, so if you want this optimization to kick in, use bool_simple.
+:::
+
 ### Optional structs
 Structs can also contain optional fields, but these need to be declared differently from normal optional codecs.
 To mark a field as optional, wrap the value in 'mark_opt' like so:
@@ -607,6 +607,10 @@ local data = scrivener.struct{[
     some_array = scrivener.mark_opt(scrivener.array(scrivener.f32))
 ]}
 ```
+
+:::note
+Optionals will also be bitpacked like booleans (again, up to 32), meaning 8 optional fields only take up 1 extra byte.
+:::
 
 ---
 
